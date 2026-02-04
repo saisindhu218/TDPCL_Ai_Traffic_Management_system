@@ -1,252 +1,53 @@
-import React, { useState } from 'react';
-import {
-  AppBar,
-  Toolbar,
-  Typography,
-  IconButton,
-  Menu,
-  MenuItem,
-  Box,
-  Avatar,
-  Badge,
-  Tooltip,
-  Divider
-} from '@mui/material';
-import {
-  Menu as MenuIcon,
-  Notifications,
-  AccountCircle,
-  Settings,
-  Logout,
-  Emergency,
-  Traffic
-} from '@mui/icons-material';
+import React from 'react';
+import { Navigate, Outlet } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
-import { useNavigate } from 'react-router-dom';
+import { Box, CircularProgress, Container, Paper, Typography } from '@mui/material';
 
-const Header = ({ onMenuClick, title }) => {
-  const { user, logout } = useAuth();
-  const navigate = useNavigate();
-  const [anchorEl, setAnchorEl] = useState(null);
-  const [notificationsAnchor, setNotificationsAnchor] = useState(null);
+const ProtectedRoute = ({ allowedRoles, children }) => {
+  const { user, loading, isAuthenticated } = useAuth();
 
-  const handleMenuOpen = (event) => {
-    setAnchorEl(event.currentTarget);
-  };
-
-  const handleMenuClose = () => {
-    setAnchorEl(null);
-  };
-
-  const handleNotificationsOpen = (event) => {
-    setNotificationsAnchor(event.currentTarget);
-  };
-
-  const handleNotificationsClose = () => {
-    setNotificationsAnchor(null);
-  };
-
-  const handleLogout = () => {
-    logout();
-    navigate('/login');
-    handleMenuClose();
-  };
-
-  const handleProfile = () => {
-    navigate('/profile');
-    handleMenuClose();
-  };
-
-  const handleSettings = () => {
-    navigate('/settings');
-    handleMenuClose();
-  };
-
-  const getRoleIcon = () => {
-    switch (user?.role) {
-      case 'ambulance':
-        return <Emergency sx={{ color: '#ff0000' }} />;
-      case 'police':
-        return <Traffic sx={{ color: '#1976d2' }} />;
-      case 'hospital':
-        return <MedicalServices sx={{ color: '#4caf50' }} />;
-      case 'admin':
-        return <AdminPanelSettings sx={{ color: '#9c27b0' }} />;
-      default:
-        return <AccountCircle />;
-    }
-  };
-
-  const getRoleColor = () => {
-    switch (user?.role) {
-      case 'ambulance':
-        return '#ff0000';
-      case 'police':
-        return '#1976d2';
-      case 'hospital':
-        return '#4caf50';
-      case 'admin':
-        return '#9c27b0';
-      default:
-        return '#757575';
-    }
-  };
-
-  return (
-    <AppBar 
-      position="fixed" 
-      sx={{ 
-        zIndex: (theme) => theme.zIndex.drawer + 1,
-        bgcolor: getRoleColor(),
-        boxShadow: '0 2px 10px rgba(0,0,0,0.1)'
-      }}
-    >
-      <Toolbar>
-        <IconButton
-          color="inherit"
-          aria-label="open drawer"
-          edge="start"
-          onClick={onMenuClick}
-          sx={{ mr: 2 }}
-        >
-          <MenuIcon />
-        </IconButton>
-
-        <Box sx={{ display: 'flex', alignItems: 'center', flexGrow: 1 }}>
-          {getRoleIcon()}
-          <Typography variant="h6" noWrap component="div" sx={{ ml: 1 }}>
-            {title || 'Smart Traffic Management System'}
+  if (loading) {
+    return (
+      <Container sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
+        <Box textAlign="center">
+          <CircularProgress size={60} sx={{ mb: 3 }} />
+          <Typography variant="h6" color="textSecondary">
+            Loading Smart Traffic System...
           </Typography>
-          
-          {user && (
-            <Typography variant="caption" sx={{ ml: 2, opacity: 0.8 }}>
-              {user.role === 'ambulance' && `🚑 ${user.vehicleNumber}`}
-              {user.role === 'police' && `🚓 ${user.stationName}`}
-              {user.role === 'hospital' && `🏥 ${user.hospitalName}`}
-              {user.role === 'admin' && `👑 Administrator`}
-            </Typography>
-          )}
+          <Typography variant="body2" color="textSecondary">
+            AI Engine Initializing
+          </Typography>
         </Box>
+      </Container>
+    );
+  }
 
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-          {/* Notifications */}
-          <Tooltip title="Notifications">
-            <IconButton color="inherit" onClick={handleNotificationsOpen}>
-              <Badge badgeContent={3} color="error">
-                <Notifications />
-              </Badge>
-            </IconButton>
-          </Tooltip>
+  if (!isAuthenticated) {
+    return <Navigate to="/login" replace />;
+  }
 
-          {/* User Menu */}
-          <Tooltip title="Account settings">
-            <IconButton
-              onClick={handleMenuOpen}
-              size="small"
-              sx={{ ml: 2 }}
-              aria-controls={anchorEl ? 'account-menu' : undefined}
-              aria-haspopup="true"
-              aria-expanded={anchorEl ? 'true' : undefined}
-            >
-              <Avatar sx={{ width: 32, height: 32, bgcolor: 'white', color: getRoleColor() }}>
-                {user?.username?.charAt(0).toUpperCase() || 'U'}
-              </Avatar>
-            </IconButton>
-          </Tooltip>
-        </Box>
+  if (allowedRoles && !allowedRoles.includes(user?.role)) {
+    return (
+      <Container sx={{ mt: 10 }}>
+        <Paper sx={{ p: 4, textAlign: 'center', maxWidth: 500, mx: 'auto' }}>
+          <Typography variant="h4" color="error" gutterBottom>
+            ⚠️ Access Denied
+          </Typography>
+          <Typography variant="body1" paragraph>
+            You don't have permission to access this page.
+          </Typography>
+          <Typography variant="body2" color="textSecondary">
+            Your role: <strong>{user?.role}</strong>
+          </Typography>
+          <Typography variant="body2" color="textSecondary" sx={{ mt: 2 }}>
+            Required roles: {allowedRoles.join(', ')}
+          </Typography>
+        </Paper>
+      </Container>
+    );
+  }
 
-        {/* Notifications Menu */}
-        <Menu
-          anchorEl={notificationsAnchor}
-          open={Boolean(notificationsAnchor)}
-          onClose={handleNotificationsClose}
-          PaperProps={{
-            sx: { width: 320, maxHeight: 400 }
-          }}
-        >
-          <MenuItem disabled>
-            <Typography variant="subtitle2" fontWeight="bold">Notifications</Typography>
-          </MenuItem>
-          <Divider />
-          
-          <MenuItem onClick={handleNotificationsClose}>
-            <Box>
-              <Typography variant="body2" fontWeight="medium">
-                🚑 Emergency vehicle enroute
-              </Typography>
-              <Typography variant="caption" color="textSecondary">
-                Ambulance KA01AB1234 heading to City Hospital
-              </Typography>
-              <Typography variant="caption" color="textSecondary" display="block">
-                5 minutes ago
-              </Typography>
-            </Box>
-          </MenuItem>
-          
-          <MenuItem onClick={handleNotificationsClose}>
-            <Box>
-              <Typography variant="body2" fontWeight="medium">
-                🚦 Signal cleared successfully
-              </Typography>
-              <Typography variant="caption" color="textSecondary">
-                Signal TS001 at MG Road cleared
-              </Typography>
-              <Typography variant="caption" color="textSecondary" display="block">
-                15 minutes ago
-              </Typography>
-            </Box>
-          </MenuItem>
-          
-          <MenuItem onClick={handleNotificationsClose}>
-            <Box>
-              <Typography variant="body2" fontWeight="medium">
-                📊 System update available
-              </Typography>
-              <Typography variant="caption" color="textSecondary">
-                New AI optimization algorithms deployed
-              </Typography>
-              <Typography variant="caption" color="textSecondary" display="block">
-                1 hour ago
-              </Typography>
-            </Box>
-          </MenuItem>
-        </Menu>
-
-        {/* User Account Menu */}
-        <Menu
-          anchorEl={anchorEl}
-          id="account-menu"
-          open={Boolean(anchorEl)}
-          onClose={handleMenuClose}
-          PaperProps={{
-            sx: {
-              width: 200,
-              mt: 1.5
-            }
-          }}
-          transformOrigin={{ horizontal: 'right', vertical: 'top' }}
-          anchorOrigin={{ horizontal: 'right', vertical: 'bottom' }}
-        >
-          <MenuItem onClick={handleProfile}>
-            <AccountCircle sx={{ mr: 2 }} />
-            Profile
-          </MenuItem>
-          
-          <MenuItem onClick={handleSettings}>
-            <Settings sx={{ mr: 2 }} />
-            Settings
-          </MenuItem>
-          
-          <Divider />
-          
-          <MenuItem onClick={handleLogout}>
-            <Logout sx={{ mr: 2 }} />
-            Logout
-          </MenuItem>
-        </Menu>
-      </Toolbar>
-    </AppBar>
-  );
+  return children || <Outlet />;
 };
 
-export default Header;
+export default ProtectedRoute;
