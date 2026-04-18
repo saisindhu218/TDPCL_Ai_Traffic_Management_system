@@ -27,12 +27,13 @@ function handleControllerError(handler, err, req, res) {
 
 function signToken(user) {
   const jwtSecret = process.env.JWT_SECRET;
+  const jwtExpiresIn = process.env.JWT_EXPIRES_IN || '7d';
   if (!jwtSecret) {
     throw new Error('JWT_SECRET is not configured on server');
   }
 
   const payload = { user: { id: user.id, role: user.role } };
-  return jwt.sign(payload, jwtSecret, { expiresIn: '12h' });
+  return jwt.sign(payload, jwtSecret, { expiresIn: jwtExpiresIn });
 }
 
 async function writeLog({ type, actorRole, message, emergencyId, payload }) {

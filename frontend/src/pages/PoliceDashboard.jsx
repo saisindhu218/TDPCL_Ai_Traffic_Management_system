@@ -57,6 +57,9 @@ const PoliceDashboard = () => {
   const [resolvedHistory, setResolvedHistory] = useState(cachedDashboard?.resolvedHistory || []);
   const [laneHistory, setLaneHistory] = useState(cachedDashboard?.laneHistory || []);
   const [congestionLevel, setCongestionLevel] = useState(60);
+  const [congestionSubmitting, setCongestionSubmitting] = useState(false);
+  const [congestionMessage, setCongestionMessage] = useState('');
+  const [congestionError, setCongestionError] = useState('');
   const [clearedLaneKeys, setClearedLaneKeys] = useState(
     (cachedDashboard?.laneHistory || [])
       .filter((entry) => !entry.legacy)
@@ -316,14 +319,28 @@ const PoliceDashboard = () => {
   };
 
   const submitCongestion = async () => {
+    if (congestionSubmitting) {
+      return;
+    }
+
+    setCongestionSubmitting(true);
+    setCongestionMessage('');
+    setCongestionError('');
+
     try {
-      await apiClient.post('/traffic/input', {
+      const payload = {
         location: currentEmergency?.ambulance_location || currentEmergency?.current_location || { lat: 12.9716, lng: 77.5946 },
         congestion_level: Number(congestionLevel),
         emergency_id: currentEmergency?.emergency_id || currentEmergency?._id
-      });
+      };
+
+      await apiClient.post('/traffic/input', payload);
+      setCongestionMessage(`Traffic update sent (${Number(congestionLevel)}%) at ${new Date().toLocaleTimeString()}`);
     } catch (err) {
       console.error(err);
+      setCongestionError(err?.response?.data?.msg || 'Failed to submit traffic update. Please try again.');
+    } finally {
+      setCongestionSubmitting(false);
     }
   };
 
@@ -367,10 +384,65 @@ const PoliceDashboard = () => {
       )}
 
       <div className="grid flex-1 min-h-0 grid-cols-1 gap-6 lg:grid-cols-3">
-        <div className="panel-card col-span-1 overflow-y-auto flex flex-col gap-4">
-          <h3 className="font-semibold border-b border-white/10 pb-2 text-slate-100 sticky top-0 bg-slate-950/80 py-2 z-10 backdrop-blur">
-            Active Overrides
-          </h3>
+        <div className="lg:col-span-2 flex flex-col gap-6 min-h-0">
+          <div className="map-shell p-1 flex flex-col relative h-[460px] md:h-[560px] lg:h-[620px]">
+            <LiveMap
+              route={currentEmergency?.route || []}
+              ambulanceCoords={currentEmergency?.ambulance_location || currentEmergency?.current_location}
+            />
+          </div>
+
+          <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
+            <div className="panel-card overflow-y-auto">
+              <h4 className="text-sm font-semibold text-slate-200 mb-3 border-b border-white/10 pb-2">Resolved History</h4>
+              {resolvedHistory.length === 0 ? (
+                <div className="text-xs text-slate-500">No resolved emergencies in this session.</div>
+              ) : (
+                <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
+                  {resolvedHistory.map((em) => (
+                    <div key={`history-${em.emergency_id || em._id}`} className="rounded-2xl border border-white/10 bg-white/5 p-3 text-xs">
+                      <div className="flex items-center justify-between text-slate-300">
+                        <span className="font-semibold text-emerald-300">Resolved #{(em.emergency_id || em._id)?.slice(-4)}</span>
+                        <span>{new Date(em.resolved_at).toLocaleTimeString()}</span>
+                      </div>
+                      {em.incident_note && (
+                        <div className="text-slate-400 mt-1">{em.incident_note}</div>
+                      )}
+                      <div className="text-slate-500 mt-1">Final ETA: {em.eta || '--'}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="panel-card overflow-y-auto">
+              <h4 className="text-sm font-semibold text-slate-200 mb-3 border-b border-white/10 pb-2">Lane Clearance History</h4>
+              {laneHistory.length === 0 ? (
+                <div className="text-xs text-slate-500">No lane clearance actions recorded yet.</div>
+              ) : (
+                <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
+                  {laneHistory.map((entry) => (
+                    <div key={`lane-${entry._id || entry.createdAt}`} className="rounded-2xl border border-white/10 bg-white/5 p-3 text-xs">
+                      <div className="flex items-center justify-between text-slate-300">
+                        <span className="font-semibold text-cyan-300">
+                          {entry.legacy ? 'Legacy clearance plan' : 'Lane cleared'}
+                        </span>
+                        <span>{new Date(entry.cleared_at).toLocaleTimeString()}</span>
+                      </div>
+                      <div className="text-slate-400 mt-1">{entry.message}</div>
+                      <div className="text-slate-500 mt-1">
+                        {entry.payload?.signal_id || entry.payload?.lane_name || '--'}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <div className="panel-card flex flex-col gap-4 overflow-y-auto min-h-0">
+          <h3 className="font-semibold border-b border-white/10 pb-2 text-slate-100">Active Overrides</h3>
 
           {currentEmergency ? (
             <div className="surface-card surface-card--soft p-4 space-y-4 border-red-500/25">
@@ -440,52 +512,6 @@ const PoliceDashboard = () => {
             </div>
           )}
 
-          <div className="surface-card surface-card--soft p-4">
-            <h4 className="text-sm font-semibold text-slate-200 mb-3">Resolved History</h4>
-            {resolvedHistory.length === 0 ? (
-              <div className="text-xs text-slate-500">No resolved emergencies in this session.</div>
-            ) : (
-              <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
-                {resolvedHistory.map((em) => (
-                  <div key={`history-${em.emergency_id || em._id}`} className="rounded-2xl border border-white/10 bg-white/5 p-3 text-xs">
-                    <div className="flex items-center justify-between text-slate-300">
-                      <span className="font-semibold text-emerald-300">Resolved #{(em.emergency_id || em._id)?.slice(-4)}</span>
-                      <span>{new Date(em.resolved_at).toLocaleTimeString()}</span>
-                    </div>
-                    {em.incident_note && (
-                      <div className="text-slate-400 mt-1">{em.incident_note}</div>
-                    )}
-                    <div className="text-slate-500 mt-1">Final ETA: {em.eta || '--'}</div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          <div className="surface-card surface-card--soft p-4">
-            <h4 className="text-sm font-semibold text-slate-200 mb-3">Lane Clearance History</h4>
-            {laneHistory.length === 0 ? (
-              <div className="text-xs text-slate-500">No lane clearance actions recorded yet.</div>
-            ) : (
-              <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
-                {laneHistory.map((entry) => (
-                  <div key={`lane-${entry._id || entry.createdAt}`} className="rounded-2xl border border-white/10 bg-white/5 p-3 text-xs">
-                    <div className="flex items-center justify-between text-slate-300">
-                      <span className="font-semibold text-cyan-300">
-                        {entry.legacy ? 'Legacy clearance plan' : 'Lane cleared'}
-                      </span>
-                      <span>{new Date(entry.cleared_at).toLocaleTimeString()}</span>
-                    </div>
-                    <div className="text-slate-400 mt-1">{entry.message}</div>
-                    <div className="text-slate-500 mt-1">
-                      {entry.payload?.signal_id || entry.payload?.lane_name || '--'}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
           <div className="surface-card surface-card--soft p-4 space-y-3">
             <h4 className="text-sm font-semibold text-slate-200">Manual Congestion Input</h4>
             <input
@@ -494,25 +520,27 @@ const PoliceDashboard = () => {
               max="100"
               step="1"
               value={congestionLevel}
-              onChange={(e) => setCongestionLevel(e.target.value)}
+              onChange={(e) => setCongestionLevel(Number(e.target.value))}
               className="w-full"
             />
             <div className="text-xs text-slate-300">Congestion Level: {congestionLevel}%</div>
+            {!currentEmergency && (
+              <div className="text-[11px] text-amber-200/90">No active emergency selected. Update will be posted as area-level congestion.</div>
+            )}
+            {congestionMessage && (
+              <div className="text-[11px] text-emerald-300">{congestionMessage}</div>
+            )}
+            {congestionError && (
+              <div className="text-[11px] text-red-300">{congestionError}</div>
+            )}
             <button
-              disabled={!currentEmergency}
+              disabled={congestionSubmitting}
               onClick={submitCongestion}
               className="action-button action-button--primary w-full justify-center py-2 disabled:bg-white/5"
             >
-              Submit Traffic Update
+              {congestionSubmitting ? 'Submitting...' : 'Submit Traffic Update'}
             </button>
           </div>
-        </div>
-
-        <div className="map-shell col-span-1 p-1 relative h-[600px] lg:col-span-2 lg:h-auto">
-          <LiveMap
-            route={currentEmergency?.route || []}
-            ambulanceCoords={currentEmergency?.ambulance_location || currentEmergency?.current_location}
-          />
         </div>
       </div>
     </div>

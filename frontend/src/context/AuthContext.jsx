@@ -5,6 +5,40 @@ import apiClient from '../utils/apiClient';
 export const AuthContext = createContext();
 
 export const AuthProvider = ({ children }) => {
+  const clearAuthState = () => {
+    setToken(null);
+    setUser(null);
+    localStorage.removeItem('token');
+    localStorage.removeItem('user');
+  };
+
+  const getUserFromTokenPayload = (rawToken) => {
+    try {
+      if (!rawToken?.includes('.')) {
+        return null;
+      }
+
+      const payloadSegment = rawToken.split('.')[1];
+      const normalizedPayload = payloadSegment.replaceAll('-', '+').replaceAll('_', '/');
+      const decodedPayload = JSON.parse(atob(normalizedPayload));
+      const userPayload = decodedPayload?.user;
+
+      if (!userPayload?.id || !userPayload?.role) {
+        return null;
+      }
+
+      return {
+        id: userPayload.id,
+        role: userPayload.role,
+        name: userPayload.name || 'Authenticated User',
+        email: userPayload.email || ''
+      };
+    } catch (err) {
+      console.warn('Unable to parse token payload for auth fallback', err);
+      return null;
+    }
+  };
+
   const [user, setUser] = useState(() => {
     try {
       const cachedUser = localStorage.getItem('user');
@@ -31,12 +65,27 @@ export const AuthProvider = ({ children }) => {
         localStorage.setItem('user', JSON.stringify(res.data));
       } catch (err) {
         console.error(err);
+        const statusCode = err?.response?.status;
+
+        if (statusCode === 401 || statusCode === 403) {
+          clearAuthState();
+          return;
+        }
+
         const cachedUser = localStorage.getItem('user');
-        if (!cachedUser) {
-          setToken(null);
-          setUser(null);
-          localStorage.removeItem('token');
-          localStorage.removeItem('user');
+        if (cachedUser) {
+          try {
+            setUser(JSON.parse(cachedUser));
+            return;
+          } catch (cachedParseErr) {
+            console.warn('Unable to parse cached user during auth bootstrap', cachedParseErr);
+          }
+        }
+
+        const tokenUser = getUserFromTokenPayload(token);
+        if (tokenUser) {
+          setUser(tokenUser);
+          localStorage.setItem('user', JSON.stringify(tokenUser));
         }
       } finally {
         setLoading(false);
@@ -75,10 +124,7 @@ export const AuthProvider = ({ children }) => {
   };
 
   const logout = () => {
-    setToken(null);
-    setUser(null);
-    localStorage.removeItem('token');
-    localStorage.removeItem('user');
+    clearAuthState();
   };
 
   const contextValue = useMemo(() => ({
