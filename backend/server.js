@@ -2,24 +2,81 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const http = require('node:http');
+const { randomUUID } = require('node:crypto');
 const { Server } = require('socket.io');
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
+const helmet = require('helmet');
+const compression = require('compression');
+const morgan = require('morgan');
+const rateLimit = require('express-rate-limit');
 const User = require('./models/User');
 const Hospital = require('./models/Hospital');
 const Emergency = require('./models/Emergency');
+const { notFoundHandler, errorHandler } = require('./middleware/errorHandlers');
+const logger = require('./utils/logger');
 
 const app = express();
+
+const allowedOrigins = (process.env.CORS_ORIGIN || 'http://localhost:5173,http://localhost:4173')
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
-    origin: '*',
-    methods: ['GET', 'POST']
-  }
+    origin: allowedOrigins,
+    methods: ['GET', 'POST'],
+    credentials: true
+  },
+  pingInterval: 25000,
+  pingTimeout: 20000,
+  transports: ['websocket', 'polling']
 });
 
-app.use(cors());
-app.use(express.json());
+app.disable('x-powered-by');
+app.set('trust proxy', 1);
+
+app.use(helmet({ crossOriginResourcePolicy: false }));
+app.use(compression());
+app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'dev'));
+app.use(cors({
+  origin(origin, callback) {
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+      return;
+    }
+
+    const corsError = new Error('Not allowed by CORS');
+    corsError.statusCode = 403;
+    callback(corsError);
+  },
+  credentials: true,
+}));
+
+app.use((req, res, next) => {
+  req.id = req.headers['x-request-id'] || randomUUID();
+  res.setHeader('x-request-id', req.id);
+  next();
+});
+
+const globalLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 500,
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (req, res) => {
+    res.status(429).json({
+      msg: 'Too many requests, please try again later.',
+      requestId: req.id || null,
+    });
+  },
+});
+
+app.use(globalLimiter);
+app.use(express.json({ limit: '1mb' }));
+app.use(express.urlencoded({ extended: false, limit: '1mb' }));
 
 // Routes
 const apiRoutes = require('./routes/api');
@@ -27,27 +84,38 @@ app.use('/api', apiRoutes);
 
 // Socket.io Real-Time System
 io.on('connection', (socket) => {
-  console.log('A user connected:', socket.id);
+  logger.info('socket_connected', { socketId: socket.id });
 
   socket.on('join_role', (role) => {
-    socket.join(role);
-    console.log(`Socket ${socket.id} joined role: ${role}`);
+    const normalizedRole = typeof role === 'string' ? role.trim().toLowerCase() : '';
+    const allowedRoles = new Set(['ambulance', 'police', 'hospital', 'admin']);
+
+    if (!allowedRoles.has(normalizedRole)) {
+      socket.emit('socket_error', { msg: 'Invalid role' });
+      return;
+    }
+
+    socket.join(normalizedRole);
+    logger.info('socket_join_role', { socketId: socket.id, role: normalizedRole });
   });
 
   socket.on('join_hospital', (hospitalCode) => {
-    if (hospitalCode) {
-      socket.join(`hospital_${hospitalCode}`);
-      console.log(`Socket ${socket.id} joined hospital: ${hospitalCode}`);
+    const normalizedCode = typeof hospitalCode === 'string' ? hospitalCode.trim().toLowerCase() : '';
+    if (/^[a-z0-9_-]{2,40}$/.test(normalizedCode)) {
+      socket.join(`hospital_${normalizedCode}`);
+      logger.info('socket_join_hospital', { socketId: socket.id, hospitalCode: normalizedCode });
     }
   });
 
   socket.on('disconnect', () => {
-    console.log('User disconnected:', socket.id);
+    logger.info('socket_disconnected', { socketId: socket.id });
   });
 });
 
 // Expose io for use in routes/controllers
 app.set('io', io);
+app.use(notFoundHandler);
+app.use(errorHandler);
 
 const DEFAULT_PORT = Number(process.env.PORT) || 5000;
 const { MongoMemoryServer } = require('mongodb-memory-server');
@@ -58,20 +126,20 @@ function listenWithFallback(initialPort) {
   const tryListen = () => {
     server.once('error', (err) => {
       if (err.code === 'EADDRINUSE') {
-        console.warn(`Port ${currentPort} is busy. Retrying on ${currentPort + 1}...`);
+        logger.warn('server_port_busy_retry', { currentPort, retryPort: currentPort + 1 });
         currentPort += 1;
         setTimeout(tryListen, 250);
         return;
       }
 
-      console.error('Server failed to start:', err);
+      logger.error('server_failed_to_start', { error: err.message, stack: err.stack });
       process.exit(1);
     });
 
     server.listen(currentPort, () => {
-      console.log(`Server running on port ${currentPort}`);
+      logger.info('server_listening', { port: currentPort });
       if (currentPort !== initialPort) {
-        console.log(`Tip: update frontend backend URL to http://localhost:${currentPort} if needed.`);
+        logger.info('server_port_fallback_notice', { url: `http://localhost:${currentPort}` });
       }
     });
   };
@@ -225,7 +293,7 @@ const cleanupStaleActiveEmergencies = async () => {
     }
   );
 
-  console.log(`Auto-resolved ${staleEmergencies.length} stale active emergency records`);
+  logger.info('stale_emergencies_resolved', { count: staleEmergencies.length });
 };
 
 const cleanupDuplicateActiveEmergencies = async () => {
@@ -265,7 +333,7 @@ const cleanupDuplicateActiveEmergencies = async () => {
     }
   );
 
-  console.log(`Auto-resolved ${duplicateIds.length} duplicate active emergency records`);
+  logger.info('duplicate_active_emergencies_resolved', { count: duplicateIds.length });
 };
 
 const startServer = async () => {
@@ -279,23 +347,23 @@ const startServer = async () => {
 
   mongoose.connect(mongoUri)
     .then(() => {
-      console.log(`Connected to MongoDB at ${mongoUri}`);
+      logger.info('mongodb_connected', { mongoUri });
       ensureDemoUsers()
-        .then(() => console.log('Demo users are ready (password: demo123)'))
-        .catch((err) => console.error('Failed to seed demo users', err));
+        .then(() => logger.info('demo_users_ready'))
+        .catch((err) => logger.error('seed_demo_users_failed', { error: err.message, stack: err.stack }));
       ensureDemoHospitals()
-        .then(() => console.log('Demo hospitals are ready'))
-        .catch((err) => console.error('Failed to seed demo hospitals', err));
+        .then(() => logger.info('demo_hospitals_ready'))
+        .catch((err) => logger.error('seed_demo_hospitals_failed', { error: err.message, stack: err.stack }));
       cleanupStaleActiveEmergencies()
-        .then(() => console.log('Stale emergency cleanup complete'))
-        .catch((err) => console.error('Failed to clean stale active emergencies', err));
+        .then(() => logger.info('stale_emergency_cleanup_complete'))
+        .catch((err) => logger.error('stale_emergency_cleanup_failed', { error: err.message, stack: err.stack }));
       cleanupDuplicateActiveEmergencies()
-        .then(() => console.log('Duplicate active emergency cleanup complete'))
-        .catch((err) => console.error('Failed to clean duplicate active emergencies', err));
+        .then(() => logger.info('duplicate_emergency_cleanup_complete'))
+        .catch((err) => logger.error('duplicate_emergency_cleanup_failed', { error: err.message, stack: err.stack }));
       listenWithFallback(DEFAULT_PORT);
     })
     .catch(err => {
-      console.error('Failed to connect to MongoDB', err);
+      logger.error('mongodb_connection_failed', { error: err.message, stack: err.stack });
     });
 };
 

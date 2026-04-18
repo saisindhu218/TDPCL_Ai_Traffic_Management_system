@@ -9,6 +9,8 @@ export const SocketContext = createContext();
 export const SocketProvider = ({ children }) => {
   const { user } = useContext(AuthContext);
   const [socket, setSocket] = useState(null);
+  const [connectionStatus, setConnectionStatus] = useState('idle');
+  const [lastSocketError, setLastSocketError] = useState('');
 
   useEffect(() => {
     if (user) {
@@ -17,21 +19,46 @@ export const SocketProvider = ({ children }) => {
       let activeSocket = null;
       let isDisposed = false;
 
+      setConnectionStatus('connecting');
+      setLastSocketError('');
+
       const connectNext = () => {
         if (isDisposed || currentIndex >= socketUrls.length) {
+          if (!isDisposed) {
+            setConnectionStatus('failed');
+          }
           return;
         }
 
-        const newSocket = io(socketUrls[currentIndex], { autoConnect: true });
+        const newSocket = io(socketUrls[currentIndex], {
+          autoConnect: true,
+          timeout: 8000,
+          reconnection: true,
+          reconnectionAttempts: 5,
+          reconnectionDelay: 800,
+          reconnectionDelayMax: 4000,
+          transports: ['websocket', 'polling']
+        });
         activeSocket = newSocket;
 
         newSocket.on('connect', () => {
           console.log('Connected to socket server');
           newSocket.emit('join_role', user.role);
+          setConnectionStatus('connected');
+          setLastSocketError('');
           setSocket(newSocket);
         });
 
-        newSocket.on('connect_error', () => {
+        newSocket.on('disconnect', () => {
+          setConnectionStatus('disconnected');
+        });
+
+        newSocket.on('socket_error', (payload) => {
+          setLastSocketError(payload?.msg || 'Socket error');
+        });
+
+        newSocket.on('connect_error', (err) => {
+          setLastSocketError(err?.message || 'Connection failed');
           newSocket.off();
           newSocket.close();
           if (!isDisposed) {
@@ -48,13 +75,22 @@ export const SocketProvider = ({ children }) => {
         if (activeSocket) {
           activeSocket.close();
         }
+        setConnectionStatus('idle');
+        setLastSocketError('');
         setSocket(null);
       };
     }
+
+    setConnectionStatus('idle');
+    setLastSocketError('');
     return undefined;
   }, [user]);
 
-  const contextValue = useMemo(() => ({ socket }), [socket]);
+  const contextValue = useMemo(() => ({
+    socket,
+    connectionStatus,
+    lastSocketError
+  }), [socket, connectionStatus, lastSocketError]);
 
   return (
     <SocketContext.Provider value={contextValue}>

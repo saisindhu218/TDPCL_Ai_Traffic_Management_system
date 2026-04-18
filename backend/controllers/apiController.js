@@ -10,6 +10,20 @@ const SystemLog = require('../models/SystemLog');
 const Hospital = require('../models/Hospital');
 
 const { optimizeEmergencyRoute } = require('../services/aiService');
+const logger = require('../utils/logger');
+
+function handleControllerError(handler, err, req, res) {
+  logger.error('api_controller_error', {
+    handler,
+    requestId: req.id,
+    method: req.method,
+    path: req.originalUrl,
+    error: err.message,
+    stack: err.stack
+  });
+
+  return res.status(500).json({ msg: 'Server Error', requestId: req.id || null });
+}
 
 function signToken(user) {
   const jwtSecret = process.env.JWT_SECRET;
@@ -57,8 +71,7 @@ exports.register = async (req, res) => {
     const token = signToken(user);
     return res.json({ token, user: { id: user.id, name: user.name, email: user.email, role: user.role } });
   } catch (err) {
-    console.error(err.message);
-    return res.status(500).send('Server Error');
+    return handleControllerError('register', err, req, res);
   }
 };
 
@@ -79,8 +92,7 @@ exports.login = async (req, res) => {
     const token = signToken(user);
     return res.json({ token, user: { id: user.id, name: user.name, email: user.email, role: user.role } });
   } catch (err) {
-    console.error(err.message);
-    return res.status(500).send('Server Error');
+    return handleControllerError('login', err, req, res);
   }
 };
 
@@ -127,7 +139,7 @@ exports.startEmergency = async (req, res) => {
     });
 
     const targetHospital = hospital_code ? await Hospital.findOne({ code: hospital_code }) : null;
-    const targetDestination = destination || (targetHospital ? { lat: targetHospital.lat, lng: targetHospital.lng } : aiResult.route?.[aiResult.route.length - 1]);
+    const targetDestination = destination || (targetHospital ? { lat: targetHospital.lat, lng: targetHospital.lng } : aiResult.route?.at(-1));
 
     const emergency = await Emergency.create({
       ambulance_id: ambulanceId,
@@ -188,8 +200,7 @@ exports.startEmergency = async (req, res) => {
     }
     return res.json(emergency);
   } catch (err) {
-    console.error(err.message);
-    return res.status(500).send('Server Error');
+    return handleControllerError('startEmergency', err, req, res);
   }
 };
 
@@ -219,7 +230,7 @@ exports.updateLocation = async (req, res) => {
 
     const aiResult = await optimizeEmergencyRoute({
       startLoc: current_location,
-      endLoc: emergency.destination || (emergency.route?.length ? emergency.route[emergency.route.length - 1] : undefined),
+      endLoc: emergency.destination || emergency.route?.at(-1),
       nearbyTraffic
     });
 
@@ -268,8 +279,7 @@ exports.updateLocation = async (req, res) => {
     emitEmergencyUpdate(io, updatePayload);
     return res.json(emergency);
   } catch (err) {
-    console.error(err.message);
-    return res.status(500).send('Server Error');
+    return handleControllerError('updateLocation', err, req, res);
   }
 };
 
@@ -318,8 +328,7 @@ exports.endEmergency = async (req, res) => {
 
     return res.json({ msg: 'Emergency ended successfully', emergency });
   } catch (err) {
-    console.error(err.message);
-    return res.status(500).send('Server Error');
+    return handleControllerError('endEmergency', err, req, res);
   }
 };
 
@@ -331,8 +340,7 @@ exports.getActiveEmergencies = async (req, res) => {
 
     return res.json(emergencies);
   } catch (err) {
-    console.error(err.message);
-    return res.status(500).send('Server Error');
+    return handleControllerError('getActiveEmergencies', err, req, res);
   }
 };
 
@@ -345,8 +353,7 @@ exports.getEmergencyHistory = async (req, res) => {
 
     return res.json(emergencies);
   } catch (err) {
-    console.error(err.message);
-    return res.status(500).send('Server Error');
+    return handleControllerError('getEmergencyHistory', err, req, res);
   }
 };
 
@@ -365,8 +372,7 @@ exports.getRoute = async (req, res) => {
       cleared_signals: emergency.cleared_signals
     });
   } catch (err) {
-    console.error(err.message);
-    return res.status(500).send('Server Error');
+    return handleControllerError('getRoute', err, req, res);
   }
 };
 
@@ -403,8 +409,7 @@ exports.inputTrafficData = async (req, res) => {
 
     return res.json(trafficEntry);
   } catch (err) {
-    console.error(err.message);
-    return res.status(500).send('Server Error');
+    return handleControllerError('inputTrafficData', err, req, res);
   }
 };
 
@@ -454,8 +459,7 @@ exports.recordLaneClearance = async (req, res) => {
 
     return res.json(logEntry);
   } catch (err) {
-    console.error(err.message);
-    return res.status(500).send('Server Error');
+    return handleControllerError('recordLaneClearance', err, req, res);
   }
 };
 
@@ -512,8 +516,7 @@ exports.getLaneClearanceHistory = async (req, res) => {
     sortedRecords.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
     return res.json(sortedRecords);
   } catch (err) {
-    console.error(err.message);
-    return res.status(500).send('Server Error');
+    return handleControllerError('getLaneClearanceHistory', err, req, res);
   }
 };
 
@@ -525,8 +528,7 @@ exports.getLiveTraffic = async (req, res) => {
 
     return res.json(records);
   } catch (err) {
-    console.error(err.message);
-    return res.status(500).send('Server Error');
+    return handleControllerError('getLiveTraffic', err, req, res);
   }
 };
 
@@ -557,8 +559,7 @@ exports.getAdminAnalytics = async (req, res) => {
       logs: recentLogs
     });
   } catch (err) {
-    console.error(err.message);
-    return res.status(500).send('Server Error');
+    return handleControllerError('getAdminAnalytics', err, req, res);
   }
 };
 
@@ -567,8 +568,7 @@ exports.getUsers = async (_req, res) => {
     const users = await User.find({}, 'name email role createdAt').sort({ createdAt: -1 });
     return res.json(users);
   } catch (err) {
-    console.error(err.message);
-    return res.status(500).send('Server Error');
+    return handleControllerError('getUsers', err, req, res);
   }
 };
 
@@ -578,8 +578,7 @@ exports.getSystemLogs = async (req, res) => {
     const logs = await SystemLog.find().sort({ createdAt: -1 }).limit(limit);
     return res.json(logs);
   } catch (err) {
-    console.error(err.message);
-    return res.status(500).send('Server Error');
+    return handleControllerError('getSystemLogs', err, req, res);
   }
 };
 
@@ -588,8 +587,7 @@ exports.getHospitals = async (_req, res) => {
     const hospitals = await Hospital.find().sort({ name: 1 });
     return res.json(hospitals);
   } catch (err) {
-    console.error(err.message);
-    return res.status(500).send('Server Error');
+    return handleControllerError('getHospitals', err, req, res);
   }
 };
 
@@ -602,8 +600,7 @@ exports.getHospitalByCode = async (req, res) => {
 
     return res.json(hospital);
   } catch (err) {
-    console.error(err.message);
-    return res.status(500).send('Server Error');
+    return handleControllerError('getHospitalByCode', err, req, res);
   }
 };
 
@@ -656,8 +653,7 @@ exports.upsertHospital = async (req, res) => {
 
     return res.json(hospital);
   } catch (err) {
-    console.error(err.message);
-    return res.status(500).send('Server Error');
+    return handleControllerError('upsertHospital', err, req, res);
   }
 };
 
@@ -670,8 +666,7 @@ exports.getMyProfile = async (req, res) => {
 
     return res.json(user);
   } catch (err) {
-    console.error(err.message);
-    return res.status(500).send('Server Error');
+    return handleControllerError('getMyProfile', err, req, res);
   }
 };
 
@@ -717,7 +712,6 @@ exports.updateAmbulanceProfile = async (req, res) => {
 
     return res.json({ msg: 'Ambulance profile updated successfully', user });
   } catch (err) {
-    console.error(err.message);
-    return res.status(500).send('Server Error');
+    return handleControllerError('updateAmbulanceProfile', err, req, res);
   }
 };
