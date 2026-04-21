@@ -177,7 +177,9 @@ async function loadAmbulanceEmergencyState({
     setHistory(historyRes.data);
     setTotalCompletedCount(historyRes.data.length);
 
-    const activeMine = activeRes.data.find((em) => String(em.ambulance_id?._id || em.ambulance_id) === String(user?.id) && em.status === 'active');
+    // Find active emergency for this ambulance (if any)
+    const userId = (typeof user !== 'undefined' && user && user.id) ? user.id : null;
+    const activeMine = activeRes.data.find((em) => String(em.ambulance_id?._id || em.ambulance_id) === String(userId) && em.status === 'active');
     if (activeMine) {
       setStatus('active');
       setEmergencyId(activeMine._id);
