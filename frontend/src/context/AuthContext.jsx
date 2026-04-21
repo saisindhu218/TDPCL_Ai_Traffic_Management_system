@@ -12,6 +12,16 @@ export const AuthProvider = ({ children }) => {
     localStorage.removeItem('user');
   };
 
+  const getCachedUser = () => {
+    try {
+      const cachedUser = localStorage.getItem('user');
+      return cachedUser ? JSON.parse(cachedUser) : null;
+    } catch (err) {
+      console.error(err);
+      return null;
+    }
+  };
+
   const getUserFromTokenPayload = (rawToken) => {
     try {
       if (!rawToken?.includes('.')) {
@@ -39,22 +49,17 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
-  const [user, setUser] = useState(() => {
-    try {
-      const cachedUser = localStorage.getItem('user');
-      return cachedUser ? JSON.parse(cachedUser) : null;
-    } catch (err) {
-      console.error(err);
-      return null;
-    }
-  });
+  const [user, setUser] = useState(() => getCachedUser());
   const [loading, setLoading] = useState(true);
   const [token, setToken] = useState(localStorage.getItem('token') || null);
 
   useEffect(() => {
     const bootstrapAuth = async () => {
       if (!token) {
-        setUser(null);
+        const cachedUser = getCachedUser();
+        if (cachedUser) {
+          setUser(cachedUser);
+        }
         setLoading(false);
         return;
       }
@@ -65,27 +70,26 @@ export const AuthProvider = ({ children }) => {
         localStorage.setItem('user', JSON.stringify(res.data));
       } catch (err) {
         console.error(err);
-        const statusCode = err?.response?.status;
-
-        if (statusCode === 401 || statusCode === 403) {
-          clearAuthState();
+        const cachedUser = getCachedUser();
+        if (cachedUser?.id && cachedUser?.role) {
+          setUser(cachedUser);
           return;
-        }
-
-        const cachedUser = localStorage.getItem('user');
-        if (cachedUser) {
-          try {
-            setUser(JSON.parse(cachedUser));
-            return;
-          } catch (cachedParseErr) {
-            console.warn('Unable to parse cached user during auth bootstrap', cachedParseErr);
-          }
         }
 
         const tokenUser = getUserFromTokenPayload(token);
         if (tokenUser) {
           setUser(tokenUser);
           localStorage.setItem('user', JSON.stringify(tokenUser));
+          return;
+        }
+
+        if (err?.response?.status === 401 || err?.response?.status === 403) {
+          clearAuthState();
+          try {
+            localStorage.removeItem('user');
+          } catch (removeErr) {
+            console.warn('Unable to clear cached user during auth bootstrap', removeErr);
+          }
         }
       } finally {
         setLoading(false);

@@ -3,7 +3,7 @@ import { AuthContext } from '../context/AuthContext';
 import { SocketContext } from '../context/SocketContext';
 import LiveMap from '../components/LiveMap';
 import apiClient from '../utils/apiClient';
-import { Activity, Cpu, Zap } from 'lucide-react';
+import { Activity, Zap } from 'lucide-react';
 
 const INCIDENT_OPTIONS = [
   'Road traffic collision',
@@ -22,6 +22,16 @@ const EMERGENCY_STEPS = [
   'Track live route updates',
   'End emergency and save history'
 ];
+
+function getHospitalOptionLabel(hospital, nearestHospitalCode) {
+  if (!hospital) {
+    return '';
+  }
+
+  return nearestHospitalCode === hospital.code
+    ? `${hospital.name} (Nearest)`
+    : hospital.name;
+}
 
 function distanceInKm(a, b) {
   const toRad = (deg) => (deg * Math.PI) / 180;
@@ -100,6 +110,31 @@ function getStepLabel(isActiveStep, isCompletedStep) {
   return 'Pending';
 }
 
+function formatSignalLaneLabel(signal) {
+  const signalName = signal?.signal_name || signal?.id || 'Signal';
+  const laneDirection = signal?.lane_direction || (signal?.from && signal?.to ? `${signal.from} to ${signal.to}` : 'Direction pending');
+
+  if (signal?.id?.includes(' - ')) {
+    return signal.id;
+  }
+
+  return `${signalName} - ${laneDirection}`;
+}
+
+function isDateToday(dateValue) {
+  if (!dateValue) {
+    return false;
+  }
+
+  const parsed = new Date(dateValue);
+  if (Number.isNaN(parsed.getTime())) {
+    return false;
+  }
+
+  const now = new Date();
+  return parsed.toDateString() === now.toDateString();
+}
+
 async function loadAmbulanceHospitals({
   setHospitals,
   setSelectedHospitalId,
@@ -121,16 +156,17 @@ async function loadAmbulanceHospitals({
 }
 
 async function loadAmbulanceEmergencyState({
-  userId,
   setStatus,
   setEmergencyId,
   setRoute,
   setEta,
   setCongestionLevel,
-  setAiWorkflow,
   setClearedSignals,
+  setSelectedHospitalId,
+  setActiveHospitalName,
   setLocation,
-  setHistory
+  setHistory,
+  setTotalCompletedCount
 }) {
   try {
     const [activeRes, historyRes] = await Promise.all([
@@ -138,27 +174,22 @@ async function loadAmbulanceEmergencyState({
       apiClient.get('/emergencies/history')
     ]);
 
-    const activeMine = activeRes.data.find((em) => String(em.ambulance_id?._id || em.ambulance_id) === String(userId) && em.status === 'active');
+    setHistory(historyRes.data);
+    setTotalCompletedCount(historyRes.data.length);
+
+    const activeMine = activeRes.data.find((em) => String(em.ambulance_id?._id || em.ambulance_id) === String(user?.id) && em.status === 'active');
     if (activeMine) {
       setStatus('active');
       setEmergencyId(activeMine._id);
       setRoute(activeMine.route || []);
       setEta(activeMine.eta || '--');
       setCongestionLevel(activeMine.congestion_level || 0);
-      setAiWorkflow(activeMine.ai_workflow || []);
       setClearedSignals(activeMine.cleared_signals || []);
-      if (activeMine.current_location) {
-        setLocation(activeMine.current_location);
+      if (activeMine.hospital_code) {
+        setSelectedHospitalId(activeMine.hospital_code);
       }
+      setActiveHospitalName(activeMine.hospital_name || '');
     }
-
-    const historyMine = historyRes.data
-      .filter((em) => String(em.ambulance_id?._id || em.ambulance_id) === String(userId))
-      .map((em) => ({
-        ...em,
-        resolved_at: em.end_time || em.updatedAt || em.createdAt
-      }));
-    setHistory(historyMine.slice(0, 20));
   } catch (err) {
     console.error(err);
   }
@@ -169,14 +200,16 @@ async function endAmbulanceEmergency({
   actionLoading,
   eta,
   incidentType,
+  selectedHospital,
+  activeHospitalName,
   setActionLoading,
   setHistory,
   setStatus,
   setRoute,
   setEta,
   setCongestionLevel,
-  setAiWorkflow,
   setClearedSignals,
+  setActiveHospitalName,
   timerRef
 }) {
   if (actionLoading) {
@@ -197,6 +230,8 @@ async function endAmbulanceEmergency({
           status: 'resolved',
           eta: res.data.emergency?.eta || eta,
           incident_note: res.data.emergency?.incident_note || incidentType,
+          hospital_name: res.data.emergency?.hospital_name || activeHospitalName || selectedHospital?.name || '',
+          hospital_code: res.data.emergency?.hospital_code || selectedHospital?.code || '',
           resolved_at: res.data.emergency?.end_time || new Date().toISOString()
         },
         ...prev
@@ -209,8 +244,8 @@ async function endAmbulanceEmergency({
     setRoute([]);
     setEta('--');
     setCongestionLevel(0);
-    setAiWorkflow([]);
     setClearedSignals([]);
+    setActiveHospitalName('');
     if (timerRef.current) {
       clearInterval(timerRef.current);
       timerRef.current = null;
@@ -226,6 +261,7 @@ async function startAmbulanceEmergency({
   actionLoading,
   selectedHospital,
   location,
+  useLiveGps,
   incidentType,
   setStartError,
   setActionLoading,
@@ -234,8 +270,9 @@ async function startAmbulanceEmergency({
   setRoute,
   setEta,
   setCongestionLevel,
-  setAiWorkflow,
   setClearedSignals,
+  setSelectedHospitalId,
+  setActiveHospitalName,
   setIncidentType,
   setLocation,
   setHistory,
@@ -257,15 +294,19 @@ async function startAmbulanceEmergency({
 
     const incidentSummary = incidentType;
 
-    const res = await apiClient.post('/emergency/start-emergency', {
-      current_location: location,
-      destination: {
-        lat: selectedHospital.lat,
-        lng: selectedHospital.lng
+    const res = await apiClient.post(
+      '/emergency/start-emergency',
+      {
+        current_location: location,
+        destination: {
+          lat: selectedHospital.lat,
+          lng: selectedHospital.lng
+        },
+        hospital_code: selectedHospital.code,
+        incident_note: incidentSummary
       },
-      hospital_code: selectedHospital.code,
-      incident_note: incidentSummary
-    });
+      { timeout: 20000 }
+    );
 
     const createdEmergency = res.data;
 
@@ -274,26 +315,29 @@ async function startAmbulanceEmergency({
     setRoute(createdEmergency.route || []);
     setEta(createdEmergency.eta || '--');
     setCongestionLevel(createdEmergency.congestion_level || 0);
-    setAiWorkflow(createdEmergency.ai_workflow || []);
     setClearedSignals(createdEmergency.cleared_signals || []);
+    setSelectedHospitalId(createdEmergency.hospital_code || selectedHospital.code);
+    setActiveHospitalName(createdEmergency.hospital_name || selectedHospital.name || '');
     setIncidentType('');
 
-    let currentStep = 0;
-    const trackedRoute = createdEmergency.route || [];
+    if (!useLiveGps) {
+      let currentStep = 0;
+      const trackedRoute = createdEmergency.route || [];
 
-    timerRef.current = setInterval(async () => {
-      if (currentStep < trackedRoute.length) {
-        const newLoc = trackedRoute[currentStep];
-        setLocation(newLoc);
-        await apiClient.post('/location/update-location', {
-          emergency_id: createdEmergency._id,
-          current_location: newLoc
-        });
-        currentStep += 1;
-      } else {
-        await endEmergency(createdEmergency._id);
-      }
-    }, 5000);
+      timerRef.current = setInterval(async () => {
+        if (currentStep < trackedRoute.length) {
+          const newLoc = trackedRoute[currentStep];
+          setLocation(newLoc);
+          await apiClient.post('/location/update-location', {
+            emergency_id: createdEmergency._id,
+            current_location: newLoc
+          });
+          currentStep += 1;
+        } else {
+          await endEmergency(createdEmergency._id);
+        }
+      }, 5000);
+    }
 
     setActionLoading(false);
   } catch (err) {
@@ -313,18 +357,27 @@ const AmbulanceDashboard = () => {
   const [route, setRoute] = useState([]);
   const [eta, setEta] = useState('--');
   const [congestionLevel, setCongestionLevel] = useState(0);
-  const [aiWorkflow, setAiWorkflow] = useState([]);
   const [clearedSignals, setClearedSignals] = useState([]);
   const [history, setHistory] = useState([]);
   const [location, setLocation] = useState({ lat: 12.9716, lng: 77.5946 });
   const [hospitals, setHospitals] = useState([]);
   const [selectedHospitalId, setSelectedHospitalId] = useState(localStorage.getItem('selectedHospitalCode') || '');
+  const [hospitalSearchInput, setHospitalSearchInput] = useState('');
+  const [hospitalDropdownOpen, setHospitalDropdownOpen] = useState(false);
+  const [activeHospitalName, setActiveHospitalName] = useState('');
   const [hospitalLoading, setHospitalLoading] = useState(true);
+  const [gpsSupported] = useState(() => typeof navigator !== 'undefined' && 'geolocation' in navigator);
+  const [gpsState, setGpsState] = useState('checking');
+  const [gpsError, setGpsError] = useState('');
   const [incidentType, setIncidentType] = useState('');
   const [startError, setStartError] = useState('');
   const [actionLoading, setActionLoading] = useState(false);
+  const [totalCompletedCount, setTotalCompletedCount] = useState(0);
 
   const timerRef = useRef(null);
+  const geolocationWatchIdRef = useRef(null);
+  const lastLocationSyncRef = useRef({ lat: null, lng: null, timestamp: 0 });
+  const hospitalDropdownTimeoutRef = useRef(null);
 
   useEffect(() => {
     loadAmbulanceHospitals({
@@ -336,18 +389,104 @@ const AmbulanceDashboard = () => {
   }, []);
 
   useEffect(() => {
+    if (!gpsSupported) {
+      setGpsState('unavailable');
+      setGpsError('Device GPS is not supported in this browser.');
+      return undefined;
+    }
+
+    const handleSuccess = (position) => {
+      const nextLocation = {
+        lat: Number(position.coords.latitude),
+        lng: Number(position.coords.longitude)
+      };
+
+      if (!Number.isFinite(nextLocation.lat) || !Number.isFinite(nextLocation.lng)) {
+        return;
+      }
+
+      setLocation(nextLocation);
+      setGpsState('active');
+      setGpsError('');
+    };
+
+    const handleError = (error) => {
+      if (error?.code === error.PERMISSION_DENIED) {
+        setGpsState('denied');
+        setGpsError('Location access denied. Enable GPS permission to track device location.');
+        return;
+      }
+
+      setGpsState('error');
+      setGpsError('Unable to read GPS location. Check signal and browser permissions.');
+    };
+
+    navigator.geolocation.getCurrentPosition(handleSuccess, handleError, {
+      enableHighAccuracy: true,
+      timeout: 15000,
+      maximumAge: 30000
+    });
+
+    geolocationWatchIdRef.current = navigator.geolocation.watchPosition(handleSuccess, handleError, {
+      enableHighAccuracy: true,
+      timeout: 20000,
+      maximumAge: 5000
+    });
+
+    return () => {
+      if (geolocationWatchIdRef.current !== null) {
+        navigator.geolocation.clearWatch(geolocationWatchIdRef.current);
+        geolocationWatchIdRef.current = null;
+      }
+    };
+  }, [gpsSupported]);
+
+  useEffect(() => {
+    if (status !== 'active' || !emergencyId) {
+      return;
+    }
+
+    const now = Date.now();
+    const lastLocation = lastLocationSyncRef.current;
+    const lastCoordsAvailable = Number.isFinite(lastLocation.lat) && Number.isFinite(lastLocation.lng);
+    const movedDistance = lastCoordsAvailable
+      ? distanceInKm(location, { lat: lastLocation.lat, lng: lastLocation.lng })
+      : Number.POSITIVE_INFINITY;
+    const elapsedMs = now - lastLocation.timestamp;
+    const shouldSync = !lastCoordsAvailable || movedDistance >= 0.01 || elapsedMs >= 10000;
+
+    if (!shouldSync) {
+      return;
+    }
+
+    lastLocationSyncRef.current = {
+      lat: location.lat,
+      lng: location.lng,
+      timestamp: now
+    };
+
+    apiClient.post('/location/update-location', {
+      emergency_id: emergencyId,
+      current_location: location
+    }).catch((err) => {
+      console.error(err);
+    });
+  }, [status, emergencyId, location]);
+
+  useEffect(() => {
     if (user?.id) {
       loadAmbulanceEmergencyState({
-        userId: user.id,
         setStatus,
         setEmergencyId,
         setRoute,
         setEta,
         setCongestionLevel,
-        setAiWorkflow,
         setClearedSignals,
+        setSelectedHospitalId,
+        setActiveHospitalName,
         setLocation,
-        setHistory
+        setHistory,
+        setTotalCompletedCount
       });
     }
   }, [user?.id]);
@@ -363,16 +502,44 @@ const AmbulanceDashboard = () => {
   }, null);
 
   const selectedHospital = hospitals.find((hospital) => hospital.code === selectedHospitalId) || nearestHospital;
+  const displayHospitalName = selectedHospital?.name || activeHospitalName || '--';
+  const hospitalSearchTerm = hospitalSearchInput.trim().toLowerCase();
+  const filteredHospitals = hospitals.filter((hospital) => {
+    if (!hospitalSearchTerm) {
+      return true;
+    }
+
+    const hospitalName = String(hospital.name || '').toLowerCase();
+    const hospitalCode = String(hospital.code || '').toLowerCase();
+    return hospitalName.includes(hospitalSearchTerm) || hospitalCode.includes(hospitalSearchTerm);
+  });
   const selectedHospitalDistance = selectedHospital ? distanceInKm(location, selectedHospital) : 0;
   const emergencyButtonLabel = getEmergencyButtonLabel(status, actionLoading);
   const showEmergencyButtonIcon = status === 'idle' && !actionLoading;
   const currentStepIndex = status === 'active' ? 2 : 0;
+  const completedEmergencyCount = Math.max(totalCompletedCount, history.length);
+  const todaysEmergencyHistory = history.filter((item) => isDateToday( item.end_time || item.updatedAt || item.createdAt));
+
+  useEffect(() => {
+    const currentHospital = hospitals.find((hospital) => hospital.code === selectedHospitalId);
+    if (currentHospital?.name) {
+      setHospitalSearchInput(currentHospital.name);
+    }
+  }, [hospitals, selectedHospitalId]);
 
   useEffect(() => {
     if (selectedHospitalId) {
       localStorage.setItem('selectedHospitalCode', selectedHospitalId);
     }
   }, [selectedHospitalId]);
+
+  useEffect(() => {
+    return () => {
+      if (hospitalDropdownTimeoutRef.current) {
+        clearTimeout(hospitalDropdownTimeoutRef.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (!socket) {
@@ -386,8 +553,13 @@ const AmbulanceDashboard = () => {
       setRoute(data.route || []);
       setEta(data.eta || '--');
       setCongestionLevel(data.congestion_level || 0);
-      setAiWorkflow(data.ai_workflow || []);
       setClearedSignals(data.cleared_signals || []);
+      if (data.hospital_code) {
+        setSelectedHospitalId(data.hospital_code);
+      }
+      if (data.hospital_name) {
+        setActiveHospitalName(data.hospital_name);
+      }
     };
 
     const onEmergencyResolved = (data) => {
@@ -401,8 +573,10 @@ const AmbulanceDashboard = () => {
             _id: data.emergency_id,
             emergency_id: data.emergency_id,
             status: 'resolved',
-            eta,
-            incident_note: incidentType,
+            eta: data.eta || eta,
+            incident_note: data.incident_note || incidentType,
+            hospital_name: data.hospital_name || activeHospitalName || selectedHospital?.name || '',
+            hospital_code: data.hospital_code || selectedHospital?.code || '',
             resolved_at: new Date().toISOString()
           },
           ...prev
@@ -415,8 +589,8 @@ const AmbulanceDashboard = () => {
       setRoute([]);
       setEta('--');
       setCongestionLevel(0);
-      setAiWorkflow([]);
       setClearedSignals([]);
+      setActiveHospitalName('');
       if (timerRef.current) {
         clearInterval(timerRef.current);
         timerRef.current = null;
@@ -430,7 +604,7 @@ const AmbulanceDashboard = () => {
       socket.off('route_update', onRouteUpdate);
       socket.off('emergency_resolved', onEmergencyResolved);
     };
-  }, [socket, emergencyId]);
+  }, [socket, emergencyId, eta, incidentType, activeHospitalName, selectedHospital]);
 
   useEffect(() => {
     return () => {
@@ -445,21 +619,28 @@ const AmbulanceDashboard = () => {
     actionLoading,
     eta,
     incidentType,
+    selectedHospital,
+    activeHospitalName,
     setActionLoading,
     setHistory,
     setStatus,
     setRoute,
     setEta,
     setCongestionLevel,
-    setAiWorkflow,
     setClearedSignals,
+    setActiveHospitalName,
     timerRef
   });
+
+  useEffect(() => {
+    setTotalCompletedCount((prev) => Math.max(prev, history.length));
+  }, [history.length]);
 
   const startEmergency = () => startAmbulanceEmergency({
     actionLoading,
     selectedHospital,
     location,
+    useLiveGps: gpsSupported && gpsState === 'active',
     incidentType,
     setStartError,
     setActionLoading,
@@ -468,8 +649,9 @@ const AmbulanceDashboard = () => {
     setRoute,
     setEta,
     setCongestionLevel,
-    setAiWorkflow,
     setClearedSignals,
+    setSelectedHospitalId,
+    setActiveHospitalName,
     setIncidentType,
     setLocation,
     setHistory,
@@ -487,26 +669,80 @@ const AmbulanceDashboard = () => {
           <h1 className="mt-4 text-3xl font-semibold tracking-tight text-white sm:text-4xl">
             Ambulance Command
           </h1>
-          <p className="mt-2 text-slate-400">Unit: {user.name}</p>
+          <p className="mt-2 text-slate-400">Unit: {user?.name || 'Ambulance Unit'}</p>
           <p className="mt-1 text-xs text-emerald-300">
             Nearest suggested hospital: {nearestHospital?.name || 'Loading...'}
+          </p>
+          <p className={`mt-1 text-xs ${gpsState === 'active' ? 'text-cyan-300' : 'text-amber-300'}`}>
+            GPS: {gpsState === 'active' ? 'Live device tracking active' : gpsError || 'Attempting to get device location...'}
           </p>
         </div>
 
         <div className="flex flex-col gap-3 lg:items-end">
-          {status === 'idle' && !hospitalLoading && (
-            <select
-              value={selectedHospitalId}
-              onChange={(e) => setSelectedHospitalId(e.target.value)}
-              className="w-full lg:w-72"
-            >
-              {hospitals.map((hospital) => (
-                <option key={hospital.code} value={hospital.code}>
-                  {hospital.name}
-                  {nearestHospital?.code === hospital.code ? ' (Nearest)' : ''}
-                </option>
-              ))}
-            </select>
+          {!hospitalLoading && (
+            <div className="relative w-full lg:w-72">
+              <input
+                value={hospitalSearchInput}
+                onFocus={() => {
+                  if (status !== 'idle') {
+                    return;
+                  }
+                  setHospitalDropdownOpen(true);
+                }}
+                onBlur={() => {
+                  if (status !== 'idle') {
+                    return;
+                  }
+                  hospitalDropdownTimeoutRef.current = setTimeout(() => {
+                    setHospitalDropdownOpen(false);
+                  }, 120);
+                }}
+                onChange={(event) => {
+                  if (status !== 'idle') {
+                    return;
+                  }
+                  const nextValue = event.target.value;
+                  setHospitalSearchInput(nextValue);
+                  setHospitalDropdownOpen(true);
+
+                  const selectedByName = hospitals.find((hospital) => hospital.name.toLowerCase() === nextValue.trim().toLowerCase());
+                  const selectedByCode = hospitals.find((hospital) => hospital.code.toLowerCase() === nextValue.trim().toLowerCase());
+                  const matchedHospital = selectedByName || selectedByCode;
+
+                  if (matchedHospital) {
+                    setSelectedHospitalId(matchedHospital.code);
+                  }
+                }}
+                placeholder="Search and select hospital"
+                className="w-full"
+                disabled={status !== 'idle'}
+              />
+
+              {status === 'idle' && hospitalDropdownOpen && (
+                <div className="absolute z-30 mt-2 max-h-56 w-full overflow-y-auto rounded-lg border border-slate-700 bg-slate-950/95 shadow-xl backdrop-blur">
+                  {filteredHospitals.length === 0 ? (
+                    <div className="px-3 py-2 text-xs text-slate-400">No hospital matches your search.</div>
+                  ) : (
+                    filteredHospitals.map((hospital) => (
+                      <button
+                        key={hospital.code}
+                        type="button"
+                        onMouseDown={(event) => {
+                          event.preventDefault();
+                          setSelectedHospitalId(hospital.code);
+                          setHospitalSearchInput(hospital.name);
+                          setHospitalDropdownOpen(false);
+                        }}
+                        className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm text-slate-200 hover:bg-slate-800/80"
+                      >
+                        <span>{hospital.name}</span>
+                        <span className="text-[11px] text-slate-400">{nearestHospital?.code === hospital.code ? 'Nearest' : hospital.code}</span>
+                      </button>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
           )}
 
           <div className="w-96">
@@ -560,25 +796,59 @@ const AmbulanceDashboard = () => {
           </div>
 
           <div className="panel-card overflow-y-auto">
-            <h3 className="text-lg font-semibold text-slate-200 border-b border-slate-700 pb-2 mb-4">Emergency History</h3>
-            {history.length === 0 ? (
-              <div className="text-slate-500 text-sm">No ended emergencies yet.</div>
-            ) : (
-              <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
-                {history.map((item) => (
+            <div className="flex items-center justify-between border-b border-slate-700 pb-2 mb-4 gap-3">
+              <h3 className="text-lg font-semibold text-slate-200">Emergency History</h3>
+              <div className="flex items-center gap-2">
+                <div className="rounded-full border border-cyan-500/30 bg-cyan-500/10 px-3 py-1 text-xs font-semibold text-cyan-300">
+                  Today: {todaysEmergencyHistory.length}
+                </div>
+                <div className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-xs font-semibold text-emerald-300">
+                  Total: {completedEmergencyCount}
+                </div>
+              </div>
+            </div>
+            <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400">Today&apos;s Details</div>
+            {todaysEmergencyHistory.length === 0 && (
+              <div className="text-slate-500 text-sm mb-2">No emergencies completed today.</div>
+            )}
+            {todaysEmergencyHistory.length > 0 && (
+              <div className="space-y-2 max-h-40 overflow-y-auto pr-1 mb-4">
+                {todaysEmergencyHistory.map((item) => (
                   <div key={item._id} className="rounded-lg border border-slate-700 bg-slate-800/60 p-3 text-xs">
                     <div className="flex items-center justify-between text-slate-300">
                       <span className="font-semibold text-emerald-300">Resolved #{(item.emergency_id || item._id)?.slice(-4)}</span>
-                      <span>{item.resolved_at ? new Date(item.resolved_at).toLocaleTimeString() : '--'}</span>
+                      <span>{item.end_time ? new Date(item.end_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '--'}</span>
                     </div>
+                    <div className="mt-1 text-slate-400">Hospital: {item.hospital_name || item.hospital_code || 'Not specified'}</div>
                     {item.incident_note && (
                       <div className="text-slate-400 mt-1">{item.incident_note}</div>
                     )}
-                    <div className="text-slate-500 mt-1">Final ETA: {item.eta || '--'}</div>
+                    <div className="text-slate-500 mt-1">Final ETA: {item.eta || '--'} | Status: {item.status || 'resolved'}</div>
                   </div>
                 ))}
               </div>
             )}
+
+            <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400">Recent History</div>
+            <div className="space-y-2 max-h-40 overflow-y-auto pr-1">
+              {history.filter(item => !isDateToday( item.end_time || item.updatedAt || item.createdAt)).length === 0 ? (
+                <div className="text-slate-500 text-sm">No older emergencies found.</div>
+              ) : (
+                history.filter(item => !isDateToday( item.end_time || item.updatedAt || item.createdAt)).map((item) => (
+                  <div key={item._id} className="rounded-lg border border-slate-700 bg-slate-800/40 p-3 text-xs">
+                    <div className="flex items-center justify-between text-slate-300">
+                      <span className="font-semibold text-cyan-300">Emergency #{(item.emergency_id || item._id)?.slice(-4)}</span>
+                      <span>{item.end_time ? new Date(item.end_time).toLocaleDateString([], { month: 'short', day: '2-digit' }) : '--'}</span>
+                    </div>
+                    <div className="mt-1 text-slate-400">Hospital: {item.hospital_name || item.hospital_code || 'Not specified'}</div>
+                    {item.incident_note && (
+                      <div className="text-slate-400 mt-1">{item.incident_note}</div>
+                    )}
+                    <div className="text-slate-500 mt-1">Final ETA: {item.eta || '--'} | Status: {item.status || 'resolved'}</div>
+                  </div>
+                ))
+              )}
+            </div>
           </div>
         </div>
 
@@ -588,7 +858,7 @@ const AmbulanceDashboard = () => {
             <div className="grid grid-cols-2 gap-3 text-sm">
               <div>
                 <div className="text-slate-400">Hospital</div>
-                <div className="text-white font-semibold">{selectedHospital?.name || '--'}</div>
+                <div className="text-white font-semibold">{displayHospitalName}</div>
               </div>
               <div>
                 <div className="text-slate-400">Area</div>
@@ -616,17 +886,17 @@ const AmbulanceDashboard = () => {
           <div className="surface-card surface-card--soft p-4">
             <h3 className="text-lg font-semibold text-slate-200 border-b border-slate-700 pb-2 mb-4">Status Overview</h3>
             <div className="grid grid-cols-2 gap-4">
-              <div className="surface-card surface-card--soft p-4">
+              <div className="surface-card surface-card--soft p-4 overflow-hidden">
                 <div className="text-sm text-slate-400 mb-1">Current State</div>
-                <div className={`font-bold text-xl flex items-center gap-2 ${status === 'active' ? 'text-red-400' : 'text-emerald-400'}`}>
-                  <Activity className="w-5 h-5" />
+                <div className={`font-bold text-base sm:text-lg leading-tight flex items-center gap-2 flex-wrap break-words ${status === 'active' ? 'text-red-400' : 'text-emerald-400'}`}>
+                  <Activity className="w-5 h-5 shrink-0" />
                   {status === 'active' ? 'EMERGENCY' : 'STANDBY'}
                 </div>
               </div>
-              <div className="surface-card surface-card--soft p-4">
+              <div className="surface-card surface-card--soft p-4 overflow-hidden">
                 <div className="text-sm text-slate-400 mb-1">ETA to Hospital</div>
                 <div className="font-bold text-xl text-cyan-400">{eta}</div>
-                <div className="text-xs text-slate-400 mt-1">{selectedHospital?.name || '--'}</div>
+                <div className="text-xs text-slate-400 mt-1">{displayHospitalName}</div>
               </div>
             </div>
           </div>
@@ -675,7 +945,9 @@ const AmbulanceDashboard = () => {
                     <div key={sig.id} className="flex items-center justify-between bg-emerald-900/20 border border-emerald-500/20 p-3 rounded-lg">
                       <div className="flex items-center gap-3">
                         <div className="w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)]"></div>
-                        <span className="text-emerald-100 font-medium">{sig.id}</span>
+                        <div>
+                          <div className="text-emerald-100 font-medium">{formatSignalLaneLabel(sig)}</div>
+                        </div>
                       </div>
                       <span className="text-xs bg-emerald-500/20 text-emerald-300 px-2 py-1 rounded">
                         {sig.status}
@@ -685,22 +957,6 @@ const AmbulanceDashboard = () => {
                 </div>
               </div>
 
-              <div>
-                <h3 className="text-lg font-semibold text-cyan-300 border-b border-cyan-900 pb-2 mb-4 flex items-center gap-2">
-                  <Cpu className="w-5 h-5" /> AI Workflow
-                </h3>
-                <div className="space-y-2">
-                  {aiWorkflow.length === 0 ? (
-                    <div className="text-sm text-slate-500">Workflow steps will appear after emergency activation.</div>
-                  ) : (
-                    aiWorkflow.map((step, index) => (
-                      <div key={step} className="text-sm bg-cyan-900/20 border border-cyan-500/20 p-3 rounded-lg text-cyan-100">
-                        Step {index + 1}: {step}
-                      </div>
-                    ))
-                  )}
-                </div>
-              </div>
             </>
           )}
         </div>

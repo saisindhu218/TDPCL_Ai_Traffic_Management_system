@@ -255,15 +255,15 @@
 }
 
 .app-shell--light .app-shell__sidebar {
-  @apply border-slate-200 bg-white/90;
+  @apply border-slate-300 bg-slate-50/92;
   box-shadow: inset -1px 0 0 rgba(15, 23, 42, 0.06), 0 28px 100px rgba(15, 23, 42, 0.08);
 }
 
 .app-shell--light .app-shell__content {
   background:
-    radial-gradient(circle at top left, rgba(59, 130, 246, 0.08), transparent 24%),
-    radial-gradient(circle at top right, rgba(16, 185, 129, 0.08), transparent 22%),
-    linear-gradient(180deg, #f8fafc 0%, #eef2ff 100%);
+    radial-gradient(circle at top left, rgba(59, 130, 246, 0.045), transparent 28%),
+    radial-gradient(circle at top right, rgba(16, 185, 129, 0.04), transparent 26%),
+    linear-gradient(180deg, #f1f5f9 0%, #e2e8f0 100%);
 }
 
 .app-shell--light .dashboard-hero,
@@ -276,19 +276,19 @@
 .app-shell--light .map-shell,
 .app-shell--light .sidebar-brand,
 .app-shell--light .sidebar-profile {
-  border-color: rgb(203 213 225 / 0.8);
-  background: rgb(255 255 255 / 0.88);
-  box-shadow: 0 20px 50px rgba(15, 23, 42, 0.08);
+  border-color: rgb(148 163 184 / 0.35);
+  background: rgb(248 250 252 / 0.9);
+  box-shadow: 0 14px 36px rgba(15, 23, 42, 0.07);
 }
 
 .app-shell--light .surface-card--soft {
-  border-color: rgb(191 219 254 / 0.75);
-  background: rgb(239 246 255 / 0.75);
+  border-color: rgb(186 230 253 / 0.5);
+  background: rgb(241 245 249 / 0.78);
 }
 
 .app-shell--light .sidebar-chip {
-  border-color: rgb(191 219 254 / 0.85);
-  background: rgb(239 246 255 / 0.8);
+  border-color: rgb(203 213 225 / 0.8);
+  background: rgb(241 245 249 / 0.86);
   color: rgb(30 41 59);
 }
 
@@ -303,10 +303,10 @@
 }
 
 .app-shell--light .sidebar-nav-link--active {
-  border-color: rgb(56 189 248 / 0.45);
-  background: rgb(224 242 254 / 0.9);
-  color: rgb(3 105 161);
-  box-shadow: 0 10px 30px rgba(14, 116, 144, 0.12);
+  border-color: rgb(56 189 248 / 0.35);
+  background: rgb(226 232 240 / 0.82);
+  color: rgb(12 74 110);
+  box-shadow: 0 8px 20px rgba(14, 116, 144, 0.08);
 }
 
 .app-shell--light .panel-title,
@@ -341,24 +341,27 @@
 .app-shell--light .bg-slate-800\/70,
 .app-shell--light .bg-slate-900,
 .app-shell--light .bg-slate-950\/40,
-.app-shell--light .bg-slate-950\/45,
+.app-shell--light .bg-slate-950\/45 {
+  background-color: rgb(241 245 249 / 0.86) !important;
+}
+
 .app-shell--light .bg-white\/5,
 .app-shell--light .bg-white\/7 {
-  background-color: rgb(255 255 255 / 0.92) !important;
+  background-color: rgb(226 232 240 / 0.78) !important;
 }
 
 .app-shell--light .metric-card__icon {
-  border-color: rgb(191 219 254 / 0.85);
-  background: rgb(239 246 255 / 0.85);
+  border-color: rgb(186 230 253 / 0.6);
+  background: rgb(241 245 249 / 0.82);
 }
 
 .app-shell--light input,
 .app-shell--light select,
 .app-shell--light textarea {
-  border-color: rgb(203 213 225) !important;
-  background: rgb(255 255 255 / 0.98) !important;
+  border-color: rgb(203 213 225 / 0.9) !important;
+  background: rgb(248 250 252 / 0.94) !important;
   color: rgb(15 23 42) !important;
-  box-shadow: 0 8px 26px rgba(15, 23, 42, 0.06) !important;
+  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.05) !important;
 }
 
 .app-shell--light input::placeholder,
@@ -368,13 +371,13 @@
 
 .app-shell--light .action-button--secondary {
   border-color: rgb(148 163 184 / 0.65);
-  background: rgb(255 255 255 / 0.95);
+  background: rgb(241 245 249 / 0.9);
   color: rgb(30 41 59);
 }
 
 .app-shell--light .action-button--secondary:hover {
-  border-color: rgb(56 189 248 / 0.65);
-  background: rgb(240 249 255);
+  border-color: rgb(56 189 248 / 0.5);
+  background: rgb(226 232 240 / 0.92);
 }
 
 .app-shell--light .action-button--danger {
@@ -387,20 +390,29 @@
 .app-shell--light .text-cyan-200,
 .app-shell--light .text-cyan-300,
 .app-shell--light .text-cyan-400,
+.app-shell--light .text-blue-400,
+.app-shell--light .text-blue-500 {
+  color: rgb(8 145 178) !important;
+}
+
 .app-shell--light .text-emerald-100,
 .app-shell--light .text-emerald-200,
 .app-shell--light .text-emerald-300,
-.app-shell--light .text-emerald-400,
+.app-shell--light .text-emerald-400 {
+  color: rgb(5 150 105) !important;
+}
+
 .app-shell--light .text-amber-200,
 .app-shell--light .text-amber-300,
-.app-shell--light .text-amber-400,
+.app-shell--light .text-amber-400 {
+  color: rgb(180 83 9) !important;
+}
+
 .app-shell--light .text-red-200,
 .app-shell--light .text-red-300,
 .app-shell--light .text-red-400,
-.app-shell--light .text-rose-400,
-.app-shell--light .text-blue-400,
-.app-shell--light .text-blue-500 {
-  color: rgb(15 23 42) !important;
+.app-shell--light .text-rose-400 {
+  color: rgb(190 24 93) !important;
 }
 
 .app-shell--light .bg-cyan-900\/20,
@@ -410,6 +422,20 @@
 .app-shell--light .bg-amber-500\/10,
 .app-shell--light .bg-red-500\/15 {
   background-color: rgb(239 246 255 / 0.9) !important;
+}
+
+.app-shell--light .bg-emerald-900\/20,
+.app-shell--light .bg-emerald-500\/10,
+.app-shell--light .bg-emerald-500\/15 {
+  background-color: rgb(236 253 245 / 0.9) !important;
+}
+
+.app-shell--light .bg-amber-500\/10 {
+  background-color: rgb(255 251 235 / 0.9) !important;
+}
+
+.app-shell--light .bg-red-500\/15 {
+  background-color: rgb(255 241 242 / 0.88) !important;
 }
 
 .app-shell--light .border-cyan-500\/20,
@@ -423,6 +449,22 @@
 .app-shell--light .border-emerald-900,
 .app-shell--light .border-cyan-900 {
   border-color: rgb(148 163 184 / 0.75) !important;
+}
+
+.app-shell--light .border-emerald-500\/20,
+.app-shell--light .border-emerald-500\/30,
+.app-shell--light .border-emerald-900 {
+  border-color: rgb(52 211 153 / 0.45) !important;
+}
+
+.app-shell--light .border-amber-500\/20,
+.app-shell--light .border-amber-500\/30 {
+  border-color: rgb(251 191 36 / 0.5) !important;
+}
+
+.app-shell--light .border-red-500\/30,
+.app-shell--light .border-red-500\/40 {
+  border-color: rgb(251 113 133 / 0.48) !important;
 }
 
 .app-shell--light .leaflet-container {

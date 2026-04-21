@@ -1,6 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import PropTypes from 'prop-types';
-import { GoogleMap, LoadScript, Marker, Polyline } from '@react-google-maps/api';
 import { MapContainer, Marker as LeafletMarker, Polyline as LeafletPolyline, Popup, TileLayer, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
@@ -66,24 +65,24 @@ function getFallbackRoute(ambulanceCoords, hospitalCoords) {
 }
 
 const MAP_TYPE_OPTIONS = [
-  { value: 'road', label: 'Road' },
-  { value: 'satellite', label: 'Satellite' },
-  { value: 'hybrid', label: 'Hybrid' },
-  { value: 'terrain', label: 'Terrain' }
+  { value: 'osm_standard', label: 'OSM Standard' },
+  { value: 'esri_satellite', label: 'Esri Satellite' },
+  { value: 'esri_hybrid', label: 'Esri Hybrid' },
+  { value: 'opentopomap', label: 'OpenTopoMap' }
 ];
 
 const LEAFLET_LAYER_CONFIG = {
-  road: {
+  osm_standard: {
     url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
     attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
     maxZoom: 19
   },
-  satellite: {
+  esri_satellite: {
     url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
     attribution: 'Tiles &copy; Esri',
     maxZoom: 19
   },
-  hybrid: {
+  esri_hybrid: {
     url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
     attribution: 'Tiles &copy; Esri',
     maxZoom: 19,
@@ -91,57 +90,33 @@ const LEAFLET_LAYER_CONFIG = {
     labelsAttribution: '&copy; <a href="https://carto.com/attributions">CARTO</a>',
     labelsSubdomains: 'abcd'
   },
-  terrain: {
+  opentopomap: {
     url: 'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',
     attribution: 'Map data: &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors, <a href="https://viewfinderpanoramas.org">SRTM</a> | Map style: &copy; <a href="https://opentopomap.org">OpenTopoMap</a>',
     maxZoom: 17
   }
 };
 
-const GoogleMapView = ({ center, route, ambulanceCoords, hospitalCoords, mapType }) => {
-  const googleCenter = { lat: center.lat || center[0], lng: center.lng || center[1] };
-  const normalizedRoute = normalizeRoute(route);
-  const routePath = normalizedRoute.length >= 2
-    ? normalizedRoute
-    : getFallbackRoute(ambulanceCoords, hospitalCoords);
-  const googleMapTypeId = mapType === 'road' ? 'roadmap' : mapType;
+function normalizeStoredMapType(value) {
+  const compatibilityMap = {
+    road: 'osm_standard',
+    satellite: 'esri_satellite',
+    hybrid: 'esri_hybrid',
+    terrain: 'opentopomap'
+  };
 
-  return (
-    <GoogleMap
-      mapContainerStyle={{ width: '100%', height: '100%' }}
-      center={googleCenter}
-      zoom={13}
-      options={{
-        disableDefaultUI: false,
-        mapTypeId: googleMapTypeId,
-        styles: googleMapTypeId === 'roadmap' ? [
-          { elementType: 'geometry', stylers: [{ color: '#0f172a' }] },
-          { elementType: 'labels.text.fill', stylers: [{ color: '#cbd5e1' }] },
-          { elementType: 'labels.text.stroke', stylers: [{ color: '#020617' }] },
-          { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#1e293b' }] },
-          { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#0b1120' }] }
-        ] : undefined
-      }}
-    >
-      {routePath.length >= 2 && (
-        <Polyline
-          path={routePath}
-          options={{ strokeColor: '#10b981', strokeOpacity: 0.85, strokeWeight: 5 }}
-        />
-      )}
-
-      {ambulanceCoords && <Marker position={ambulanceCoords} />}
-      {hospitalCoords && <Marker position={hospitalCoords} />}
-    </GoogleMap>
-  );
-};
+  const normalized = compatibilityMap[value] || value;
+  return MAP_TYPE_OPTIONS.some((option) => option.value === normalized)
+    ? normalized
+    : 'osm_standard';
+}
 
 const LeafletMapView = ({ center, route, ambulanceCoords, hospitalCoords, mapType }) => {
   const normalizedRoute = normalizeRoute(route);
   const fallbackRoute = getFallbackRoute(ambulanceCoords, hospitalCoords);
   const polylinePositions = (normalizedRoute.length >= 2 ? normalizedRoute : fallbackRoute)
     .map((point) => [point.lat, point.lng]);
-  const layerConfig = LEAFLET_LAYER_CONFIG[mapType] || LEAFLET_LAYER_CONFIG.road;
+  const layerConfig = LEAFLET_LAYER_CONFIG[mapType] || LEAFLET_LAYER_CONFIG.osm_standard;
 
   return (
     <MapContainer
@@ -187,35 +162,19 @@ const LeafletMapView = ({ center, route, ambulanceCoords, hospitalCoords, mapTyp
 };
 
 const LiveMap = ({ route = [], ambulanceCoords = null, hospitalCoords = null }) => {
-  const googleMapsApiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
   const defaultCenter = [12.9716, 77.5946];
   const [mapType, setMapType] = useState(() => {
     const storedMapType = localStorage.getItem('preferredMapType');
-    return MAP_TYPE_OPTIONS.some((option) => option.value === storedMapType) ? storedMapType : 'road';
+    return normalizeStoredMapType(storedMapType);
   });
   const normalizedRoute = normalizeRoute(route);
   const center = ambulanceCoords || (normalizedRoute.length > 0 ? normalizedRoute[0] : null) || defaultCenter;
-  const shouldUseGoogleMaps = Boolean(googleMapsApiKey);
 
   useEffect(() => {
     localStorage.setItem('preferredMapType', mapType);
   }, [mapType]);
 
   const mapContent = useMemo(() => {
-    if (shouldUseGoogleMaps) {
-      return (
-        <LoadScript googleMapsApiKey={googleMapsApiKey}>
-          <GoogleMapView
-            center={center}
-            route={normalizedRoute}
-            ambulanceCoords={ambulanceCoords}
-            hospitalCoords={hospitalCoords}
-            mapType={mapType}
-          />
-        </LoadScript>
-      );
-    }
-
     return (
       <LeafletMapView
         center={center}
@@ -225,7 +184,7 @@ const LiveMap = ({ route = [], ambulanceCoords = null, hospitalCoords = null }) 
         mapType={mapType}
       />
     );
-  }, [ambulanceCoords, center, googleMapsApiKey, hospitalCoords, mapType, normalizedRoute, shouldUseGoogleMaps]);
+  }, [ambulanceCoords, center, hospitalCoords, mapType, normalizedRoute]);
 
   return (
     <div className="map-shell w-full h-full min-h-[400px] overflow-hidden relative z-0">
@@ -246,11 +205,9 @@ const LiveMap = ({ route = [], ambulanceCoords = null, hospitalCoords = null }) 
         </select>
       </div>
 
-      {!shouldUseGoogleMaps && (
-        <div className="absolute bottom-3 left-3 z-[999] rounded-full border border-white/10 bg-slate-950/75 px-3 py-1 text-[11px] text-slate-200 shadow-lg backdrop-blur">
-          OSM fallback active (set VITE_GOOGLE_MAPS_API_KEY for Google Maps)
-        </div>
-      )}
+      <div className="absolute bottom-3 left-3 z-[999] rounded-full border border-white/10 bg-slate-950/75 px-3 py-1 text-[11px] text-slate-200 shadow-lg backdrop-blur">
+        Leaflet + OpenStreetMap active
+      </div>
     </div>
   );
 };
@@ -259,34 +216,19 @@ MapUpdater.propTypes = {
   center: coordinateShape
 };
 
-GoogleMapView.propTypes = {
-  center: PropTypes.oneOfType([coordinateShape, PropTypes.arrayOf(PropTypes.number)]).isRequired,
-  route: PropTypes.arrayOf(coordinateShape),
-  ambulanceCoords: coordinateShape,
-  hospitalCoords: coordinateShape,
-  mapType: PropTypes.oneOf(['road', 'satellite', 'hybrid', 'terrain'])
-};
-
-GoogleMapView.defaultProps = {
-  route: [],
-  ambulanceCoords: null,
-  hospitalCoords: null,
-  mapType: 'road'
-};
-
 LeafletMapView.propTypes = {
   center: PropTypes.oneOfType([coordinateShape, PropTypes.arrayOf(PropTypes.number)]).isRequired,
   route: PropTypes.arrayOf(coordinateShape),
   ambulanceCoords: coordinateShape,
   hospitalCoords: coordinateShape,
-  mapType: PropTypes.oneOf(['road', 'satellite', 'hybrid', 'terrain'])
+  mapType: PropTypes.oneOf(['osm_standard', 'esri_satellite', 'esri_hybrid', 'opentopomap'])
 };
 
 LeafletMapView.defaultProps = {
   route: [],
   ambulanceCoords: null,
   hospitalCoords: null,
-  mapType: 'road'
+  mapType: 'osm_standard'
 };
 
 LiveMap.propTypes = {

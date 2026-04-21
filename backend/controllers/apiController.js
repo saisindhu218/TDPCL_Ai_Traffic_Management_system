@@ -9,7 +9,7 @@ const RouteRecord = require('../models/RouteRecord');
 const SystemLog = require('../models/SystemLog');
 const Hospital = require('../models/Hospital');
 
-const { optimizeEmergencyRoute } = require('../services/aiService');
+const { optimizeEmergencyRoute, generateClearancePlan } = require('../services/aiService');
 const logger = require('../utils/logger');
 
 function handleControllerError(handler, err, req, res) {
@@ -46,12 +46,70 @@ async function writeLog({ type, actorRole, message, emergencyId, payload }) {
   });
 }
 
+function formatLocationLabel(location) {
+  if (!location || typeof location.lat !== 'number' || typeof location.lng !== 'number') {
+    return 'Unknown';
+  }
+
+  return `${location.lat.toFixed(4)}, ${location.lng.toFixed(4)}`;
+}
+
+function getActorName(user = {}) {
+  return user.name || user.email || user.id || 'Unknown User';
+}
+
 function emitEmergencyUpdate(io, updatePayload) {
   io.to('ambulance').emit('ambulance_update', updatePayload);
   io.to('police').emit('police_alert', updatePayload);
   io.to('hospital').emit('hospital_alert', updatePayload);
   io.to('admin').emit('admin_alert', updatePayload);
   io.emit('route_update', updatePayload);
+}
+
+function mergeClearedSignalStatuses(previousSignals = [], nextSignals = []) {
+  const previousStatusById = new Map();
+
+  previousSignals.forEach((signal) => {
+    if (signal?.id) {
+      previousStatusById.set(signal.id, signal.status || 'Pending');
+    }
+  });
+
+  return nextSignals.map((signal) => ({
+    ...signal,
+    status: previousStatusById.get(signal.id) || signal.status || 'Pending'
+  }));
+}
+
+function hasDirectionalSignalPlan(signals = []) {
+  if (!Array.isArray(signals) || signals.length === 0) {
+    return false;
+  }
+
+  return signals.some((signal) => Boolean(signal?.lane_direction));
+}
+
+async function ensureDirectionalSignalPlan(emergency) {
+  if (!emergency || hasDirectionalSignalPlan(emergency.cleared_signals)) {
+    return emergency;
+  }
+
+  const startLoc = emergency.current_location || emergency.route?.[0];
+  const endLoc = emergency.destination || emergency.route?.at(-1);
+  if (!startLoc || !endLoc) {
+    return emergency;
+  }
+
+  const generatedSignals = generateClearancePlan({
+    route: emergency.route || [],
+    startLoc,
+    endLoc,
+    congestionLevel: emergency.congestion_level || 50
+  });
+
+  emergency.cleared_signals = mergeClearedSignalStatuses(emergency.cleared_signals || [], generatedSignals);
+  await emergency.save();
+  return emergency;
 }
 
 exports.register = async (req, res) => {
@@ -130,7 +188,8 @@ exports.startEmergency = async (req, res) => {
         );
       }
 
-      return res.json(latestActiveEmergency);
+      const normalizedEmergency = await ensureDirectionalSignalPlan(latestActiveEmergency);
+      return res.json(normalizedEmergency);
     }
 
     const aiResult = await optimizeEmergencyRoute({
@@ -175,7 +234,11 @@ exports.startEmergency = async (req, res) => {
         hospital_name: emergency.hospital_name,
         incident_note,
         congestion_level: aiResult.congestionLevel,
-        eta: aiResult.eta
+        eta: aiResult.eta,
+        ride_from: formatLocationLabel(current_location),
+        ride_to: emergency.hospital_name || formatLocationLabel(targetDestination),
+        performed_by: getActorName(req.user),
+        performed_by_id: req.user.id
       }
     });
 
@@ -238,7 +301,7 @@ exports.updateLocation = async (req, res) => {
     emergency.current_location = current_location;
     emergency.route = aiResult.route;
     emergency.eta = aiResult.eta;
-    emergency.cleared_signals = aiResult.cleared_signals;
+    emergency.cleared_signals = mergeClearedSignalStatuses(emergency.cleared_signals, aiResult.cleared_signals);
     emergency.congestion_level = aiResult.congestionLevel;
     emergency.ai_workflow = aiResult.aiWorkflow;
     await emergency.save();
@@ -258,7 +321,10 @@ exports.updateLocation = async (req, res) => {
       payload: {
         location: current_location,
         eta: aiResult.eta,
-        congestion_level: aiResult.congestionLevel
+        congestion_level: aiResult.congestionLevel,
+        ride_to: emergency.hospital_name || formatLocationLabel(emergency.destination),
+        performed_by: getActorName(req.user),
+        performed_by_id: req.user.id
       }
     });
 
@@ -300,13 +366,25 @@ exports.endEmergency = async (req, res) => {
     emergency.end_time = Date.now();
     await emergency.save();
 
+    const tripStartTime = emergency.start_time || emergency.createdAt;
+    const tripDurationMinutes = tripStartTime
+      ? Math.max(1, Math.round((new Date(emergency.end_time).getTime() - new Date(tripStartTime).getTime()) / 60000))
+      : null;
+    const startPoint = emergency.route?.[0] || emergency.current_location;
+
     await writeLog({
       type: 'EMERGENCY_ENDED',
       actorRole: req.user.role,
       message: 'Emergency closed and corridor reset',
       emergencyId: emergency._id,
       payload: {
-        end_time: emergency.end_time
+        start_time: tripStartTime,
+        end_time: emergency.end_time,
+        duration_minutes: tripDurationMinutes,
+        ride_from: formatLocationLabel(startPoint),
+        ride_to: emergency.hospital_name || formatLocationLabel(emergency.destination),
+        performed_by: getActorName(req.user),
+        performed_by_id: req.user.id
       }
     });
 
@@ -339,6 +417,8 @@ exports.getActiveEmergencies = async (req, res) => {
       .populate('ambulance_id', 'name email role')
       .sort({ createdAt: -1 });
 
+    await Promise.all(emergencies.map((emergency) => ensureDirectionalSignalPlan(emergency)));
+
     return res.json(emergencies);
   } catch (err) {
     return handleControllerError('getActiveEmergencies', err, req, res);
@@ -347,10 +427,22 @@ exports.getActiveEmergencies = async (req, res) => {
 
 exports.getEmergencyHistory = async (req, res) => {
   try {
-    const emergencies = await Emergency.find({ status: 'resolved' })
+    const baseQuery = { status: 'resolved' };
+
+    // Ambulance users should receive their own complete history rather than a globally truncated list.
+    if (req.user?.role === 'ambulance' && req.user?.id) {
+      baseQuery.ambulance_id = req.user.id;
+    }
+
+    const [emergencies, totalResolvedCount] = await Promise.all([
+      Emergency.find(baseQuery)
       .populate('ambulance_id', 'name email role')
       .sort({ end_time: -1, createdAt: -1 })
-      .limit(30);
+      .limit(200),
+      Emergency.countDocuments(baseQuery)
+    ]);
+
+    res.set('x-total-count', String(totalResolvedCount));
 
     return res.json(emergencies);
   } catch (err) {
@@ -401,7 +493,11 @@ exports.inputTrafficData = async (req, res) => {
       actorRole: req.user.role,
       message: 'Traffic congestion update submitted',
       emergencyId: emergency_id,
-      payload: trafficEntry
+      payload: {
+        ...trafficEntry.toObject(),
+        performed_by: getActorName(req.user),
+        performed_by_id: req.user.id
+      }
     });
 
     const io = req.app.get('io');
@@ -433,6 +529,22 @@ exports.recordLaneClearance = async (req, res) => {
 
     const label = lane_name || signal_id;
 
+    if (!Array.isArray(emergency.cleared_signals)) {
+      emergency.cleared_signals = [];
+    }
+
+    const targetIndex = emergency.cleared_signals.findIndex((signal) => signal.id === label || signal.id === signal_id || signal.id === lane_name);
+    if (targetIndex >= 0) {
+      emergency.cleared_signals[targetIndex].status = 'Cleared';
+    } else {
+      emergency.cleared_signals.push({
+        id: label,
+        status: 'Cleared'
+      });
+    }
+
+    await emergency.save();
+
     const logEntry = await SystemLog.create({
       emergency_id,
       type: 'LANE_CLEARED',
@@ -444,7 +556,9 @@ exports.recordLaneClearance = async (req, res) => {
         note,
         emergency_id,
         hospital_code: emergency.hospital_code || '',
-        hospital_name: emergency.hospital_name || ''
+        hospital_name: emergency.hospital_name || '',
+        performed_by: getActorName(req.user),
+        performed_by_id: req.user.id
       }
     });
 
@@ -456,6 +570,21 @@ exports.recordLaneClearance = async (req, res) => {
       note,
       createdAt: logEntry.createdAt,
       message: logEntry.message
+    });
+
+    emitEmergencyUpdate(io, {
+      emergency_id: emergency._id,
+      status: emergency.status,
+      route: emergency.route,
+      eta: emergency.eta,
+      congestion_level: emergency.congestion_level,
+      ai_workflow: emergency.ai_workflow,
+      cleared_signals: emergency.cleared_signals,
+      ambulance_location: emergency.current_location,
+      hospital_code: emergency.hospital_code,
+      hospital_name: emergency.hospital_name,
+      incident_note: emergency.incident_note,
+      message: `Lane cleared: ${label}`
     });
 
     return res.json(logEntry);
@@ -541,6 +670,7 @@ exports.getAdminAnalytics = async (req, res) => {
       totalUsers,
       trafficPoints,
       totalRouteRecords,
+      totalEvents,
       recentLogs
     ] = await Promise.all([
       Emergency.countDocuments({ status: 'active' }),
@@ -548,8 +678,15 @@ exports.getAdminAnalytics = async (req, res) => {
       User.countDocuments(),
       TrafficData.countDocuments(),
       RouteRecord.countDocuments(),
+      SystemLog.countDocuments(),
       SystemLog.find().sort({ createdAt: -1 }).limit(25)
     ]);
+
+    const resolvedTotalEvents = Math.max(
+      Number(totalEvents) || 0,
+      Array.isArray(recentLogs) ? recentLogs.length : 0,
+      Number(totalEmergencies) || 0
+    );
 
     return res.json({
       activeEmergencies,
@@ -557,6 +694,7 @@ exports.getAdminAnalytics = async (req, res) => {
       totalUsers,
       trafficPoints,
       totalRouteRecords,
+      totalEvents: resolvedTotalEvents,
       logs: recentLogs
     });
   } catch (err) {
@@ -665,7 +803,33 @@ exports.getMyProfile = async (req, res) => {
       return res.status(404).json({ msg: 'User not found' });
     }
 
-    return res.json(user);
+    const profileDefaults = {
+      driver_name: '',
+      driver_email: '',
+      phone: '',
+      date_of_birth: '',
+      blood_group: '',
+      address: '',
+      driver_license_number: '',
+      driver_license_expiry: '',
+      ambulance_vehicle_number: '',
+      ambulance_unit_code: '',
+      years_of_experience: 0,
+      shift_type: '',
+      base_hospital: '',
+      emergency_contact_name: '',
+      emergency_contact_phone: '',
+      profile_note: ''
+    };
+
+    const plainUser = user.toObject();
+    return res.json({
+      ...plainUser,
+      ambulance_profile: {
+        ...profileDefaults,
+        ...plainUser.ambulance_profile
+      }
+    });
   } catch (err) {
     return handleControllerError('getMyProfile', err, req, res);
   }
@@ -674,6 +838,8 @@ exports.getMyProfile = async (req, res) => {
 exports.updateAmbulanceProfile = async (req, res) => {
   try {
     const allowedFields = [
+      'driver_name',
+      'driver_email',
       'phone',
       'date_of_birth',
       'blood_group',
@@ -711,7 +877,35 @@ exports.updateAmbulanceProfile = async (req, res) => {
       return res.status(404).json({ msg: 'User not found' });
     }
 
-    return res.json({ msg: 'Ambulance profile updated successfully', user });
+    const profileDefaults = {
+      driver_name: '',
+      driver_email: '',
+      phone: '',
+      date_of_birth: '',
+      blood_group: '',
+      address: '',
+      driver_license_number: '',
+      driver_license_expiry: '',
+      ambulance_vehicle_number: '',
+      ambulance_unit_code: '',
+      years_of_experience: 0,
+      shift_type: '',
+      base_hospital: '',
+      emergency_contact_name: '',
+      emergency_contact_phone: '',
+      profile_note: ''
+    };
+
+    return res.json({
+      msg: 'Ambulance profile updated successfully',
+      user: {
+        ...user.toObject(),
+        ambulance_profile: {
+          ...profileDefaults,
+          ...user.ambulance_profile
+        }
+      }
+    });
   } catch (err) {
     return handleControllerError('updateAmbulanceProfile', err, req, res);
   }

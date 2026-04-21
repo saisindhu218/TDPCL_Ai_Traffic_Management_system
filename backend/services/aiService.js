@@ -2,28 +2,148 @@ const { haversineDistanceKm, createLinearRoute } = require('../utils/geo');
 
 const DEFAULT_HOSPITAL = { lat: 12.9816, lng: 77.6046 };
 const OSRM_BASE_URL = process.env.OSRM_BASE_URL || 'https://router.project-osrm.org';
+const OSRM_FETCH_TIMEOUT_MS = Number(process.env.OSRM_FETCH_TIMEOUT_MS || 3500);
+const SIGNAL_MATCH_RADIUS_KM = 1.5;
 
-function buildSignalAndLanePlan(congestionLevel) {
-  if (congestionLevel > 70) {
+const SIGNAL_NODES = [
+  { name: 'Jayanagar', lat: 12.925, lng: 77.5938 },
+  { name: 'Banashankari', lat: 12.9152, lng: 77.5739 },
+  { name: 'Silk Board', lat: 12.9174, lng: 77.6224 },
+  { name: 'BTM Layout', lat: 12.9166, lng: 77.6101 },
+  { name: 'JP Nagar', lat: 12.9063, lng: 77.5857 },
+  { name: 'Koramangala', lat: 12.9345, lng: 77.6146 },
+  { name: 'Lalbagh', lat: 12.9507, lng: 77.5848 },
+  { name: 'Richmond Circle', lat: 12.9632, lng: 77.5957 },
+  { name: 'MG Road', lat: 12.9756, lng: 77.6066 },
+  { name: 'Indiranagar', lat: 12.9784, lng: 77.6408 },
+  { name: 'Domlur', lat: 12.9609, lng: 77.6387 },
+  { name: 'Hebbal', lat: 13.0358, lng: 77.597 },
+  { name: 'Yeshwanthpur', lat: 13.0285, lng: 77.54 },
+  { name: 'Rajajinagar', lat: 12.9916, lng: 77.5537 },
+  { name: 'Majestic', lat: 12.9762, lng: 77.5727 }
+];
+
+function nearestSignalNode(point) {
+  let bestNode = null;
+  let bestDistance = Number.POSITIVE_INFINITY;
+
+  SIGNAL_NODES.forEach((node) => {
+    const dist = haversineDistanceKm(point, node);
+    if (dist < bestDistance) {
+      bestDistance = dist;
+      bestNode = node;
+    }
+  });
+
+  return {
+    node: bestNode,
+    distanceKm: bestDistance
+  };
+}
+
+function routeIndexForNode(route, node) {
+  let nearestIndex = 0;
+  let nearestDistance = Number.POSITIVE_INFINITY;
+
+  route.forEach((point, index) => {
+    const dist = haversineDistanceKm(point, node);
+    if (dist < nearestDistance) {
+      nearestDistance = dist;
+      nearestIndex = index;
+    }
+  });
+
+  return {
+    nearestIndex,
+    nearestDistance
+  };
+}
+
+function buildSignalAndLanePlan(route, startLoc, endLoc, congestionLevel) {
+  const routePoints = Array.isArray(route) && route.length ? route : createLinearRoute(startLoc, endLoc || DEFAULT_HOSPITAL, 10);
+
+  const candidates = SIGNAL_NODES
+    .map((node) => {
+      const { nearestIndex, nearestDistance } = routeIndexForNode(routePoints, node);
+      return {
+        node,
+        nearestIndex,
+        nearestDistance
+      };
+    })
+    .filter((entry) => entry.nearestDistance <= SIGNAL_MATCH_RADIUS_KM)
+    .sort((a, b) => a.nearestIndex - b.nearestIndex);
+
+  const orderedNodes = [];
+  let lastIndex = -5;
+  candidates.forEach((entry) => {
+    if (entry.nearestIndex - lastIndex < 3) {
+      return;
+    }
+
+    if (orderedNodes.some((n) => n.name === entry.node.name)) {
+      return;
+    }
+
+    orderedNodes.push({
+      name: entry.node.name,
+      index: entry.nearestIndex
+    });
+    lastIndex = entry.nearestIndex;
+  });
+
+  const startNearest = nearestSignalNode(startLoc || routePoints[0]);
+  const destinationNearest = nearestSignalNode(endLoc || routePoints.at(-1));
+
+  if (startNearest.node && (orderedNodes.length === 0 || orderedNodes[0].name !== startNearest.node.name)) {
+    orderedNodes.unshift({ name: startNearest.node.name, index: -1 });
+  }
+
+  if (
+    destinationNearest.node
+    && !orderedNodes.some((node) => node.name === destinationNearest.node.name)
+    && destinationNearest.distanceKm <= SIGNAL_MATCH_RADIUS_KM * 2
+  ) {
+    orderedNodes.push({ name: destinationNearest.node.name, index: routePoints.length + 1 });
+  }
+
+  const uniqueOrderedNames = orderedNodes.map((node) => node.name);
+  if (uniqueOrderedNames.length < 2) {
+    const fromLabel = startNearest.node?.name || 'Current Location';
+    const toLabel = destinationNearest.node?.name || 'Destination';
     return [
-      { id: 'Signal A', status: 'Green' },
-      { id: 'Signal C', status: 'Green' },
-      { id: 'Lane 2', status: 'Clear' },
-      { id: 'Emergency Lane', status: 'Reserved' }
+      {
+        id: `${fromLabel} Signal - ${fromLabel} to ${toLabel}`,
+        signal_name: `${fromLabel} Signal`,
+        lane_direction: `${fromLabel} to ${toLabel}`,
+        from: fromLabel,
+        to: toLabel,
+        sequence: 1,
+        status: congestionLevel > 55 ? 'Priority' : 'Pending'
+      }
     ];
   }
 
-  if (congestionLevel > 40) {
-    return [
-      { id: 'Signal A', status: 'Green' },
-      { id: 'Lane 2', status: 'Clear' }
-    ];
+  const checkpoints = [];
+  for (let index = 0; index < uniqueOrderedNames.length - 1; index += 1) {
+    const from = uniqueOrderedNames[index];
+    const to = uniqueOrderedNames[index + 1];
+    if (from === to) {
+      continue;
+    }
+
+    checkpoints.push({
+      id: `${from} Signal - ${from} to ${to}`,
+      signal_name: `${from} Signal`,
+      lane_direction: `${from} to ${to}`,
+      from,
+      to,
+      sequence: checkpoints.length + 1,
+      status: 'Pending'
+    });
   }
 
-  return [
-    { id: 'Signal A', status: 'Green' },
-    { id: 'Lane 1', status: 'Clear' }
-  ];
+  return checkpoints;
 }
 
 function getFallbackRoute(startLoc, endLoc) {
@@ -82,7 +202,18 @@ function scoreRoadRoute(route, nearbyTraffic) {
 async function fetchRoadRoutes(startLoc, endLoc) {
   const url = `${OSRM_BASE_URL}/route/v1/driving/${startLoc.lng},${startLoc.lat};${endLoc.lng},${endLoc.lat}?overview=full&geometries=geojson&alternatives=true&steps=false`;
 
-  const response = await fetch(url);
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => {
+    controller.abort();
+  }, OSRM_FETCH_TIMEOUT_MS);
+
+  let response;
+  try {
+    response = await fetch(url, { signal: controller.signal });
+  } finally {
+    clearTimeout(timeoutId);
+  }
+
   if (!response.ok) {
     throw new Error(`OSRM route request failed with status ${response.status}`);
   }
@@ -131,7 +262,7 @@ async function optimizeEmergencyRoute({ startLoc, endLoc, nearbyTraffic = [] }) 
     congestionLevel,
     route: bestRoute.route,
     eta: `${etaMinutes} min`,
-    cleared_signals: buildSignalAndLanePlan(congestionLevel),
+    cleared_signals: buildSignalAndLanePlan(bestRoute.route, startLoc, destination, congestionLevel),
     aiWorkflow: [
       'Collect ambulance location and selected hospital destination',
       'Request real road routes from OSRM directions engine',
@@ -142,6 +273,11 @@ async function optimizeEmergencyRoute({ startLoc, endLoc, nearbyTraffic = [] }) 
   };
 }
 
+function generateClearancePlan({ route = [], startLoc, endLoc, congestionLevel = 50 }) {
+  return buildSignalAndLanePlan(route, startLoc, endLoc, congestionLevel);
+}
+
 module.exports = {
-  optimizeEmergencyRoute
+  optimizeEmergencyRoute,
+  generateClearancePlan
 };

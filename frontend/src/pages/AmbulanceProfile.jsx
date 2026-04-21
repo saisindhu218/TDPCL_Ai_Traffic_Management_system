@@ -2,6 +2,8 @@ import React, { useEffect, useState } from 'react';
 import apiClient from '../utils/apiClient';
 
 const initialForm = {
+  driver_name: '',
+  driver_email: '',
   phone: '',
   date_of_birth: '',
   blood_group: '',
@@ -21,6 +23,7 @@ const initialForm = {
 const AmbulanceProfile = () => {
   const [form, setForm] = useState(initialForm);
   const [savedProfile, setSavedProfile] = useState(initialForm);
+  const [userInfo, setUserInfo] = useState({ name: '', email: '' });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
@@ -36,6 +39,10 @@ const AmbulanceProfile = () => {
           ...profile
         };
 
+        setUserInfo({
+          name: nextProfile.driver_name || res.data.name || '',
+          email: nextProfile.driver_email || res.data.email || ''
+        });
         setForm(nextProfile);
         setSavedProfile(nextProfile);
       } catch (err) {
@@ -79,12 +86,17 @@ const AmbulanceProfile = () => {
   }
 
   const profileDisplay = savedProfile;
+  const hasProfileData = Object.entries(profileDisplay).some(([key, value]) => key !== 'years_of_experience' && String(value || '').trim() !== '') || Number(profileDisplay.years_of_experience) > 0;
 
   return (
     <div className="dashboard-page max-w-5xl mx-auto">
       <header className="dashboard-hero">
         <h1 className="text-3xl font-semibold tracking-tight text-white mb-2 sm:text-4xl">Ambulance Driver Profile</h1>
         <p className="max-w-2xl text-slate-400">Manage official driver and vehicle details used during emergency operations.</p>
+        <div className="mt-4 rounded-xl border border-slate-700 bg-slate-900/60 p-4 text-sm text-slate-300">
+          <div><span className="text-slate-500">Driver:</span> {userInfo.name || '--'}</div>
+          <div><span className="text-slate-500">Email:</span> {userInfo.email || '--'}</div>
+        </div>
       </header>
 
       <div className="panel-card space-y-6">
@@ -113,10 +125,18 @@ const AmbulanceProfile = () => {
           )}
         </div>
 
+        {!hasProfileData && (
+          <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
+            No ambulance profile data has been saved yet. Use Change Profile to fill in the driver and vehicle details.
+          </div>
+        )}
+
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="surface-card surface-card--soft p-4">
             <div className="text-xs uppercase tracking-wider text-slate-500 mb-2">Driver Details</div>
             <div className="space-y-1 text-sm text-slate-200">
+              <div><span className="text-slate-400">Driver Name:</span> {profileDisplay.driver_name || userInfo.name || '--'}</div>
+              <div><span className="text-slate-400">Driver Email:</span> {profileDisplay.driver_email || userInfo.email || '--'}</div>
               <div><span className="text-slate-400">Phone:</span> {profileDisplay.phone || '--'}</div>
               <div><span className="text-slate-400">Date of Birth:</span> {profileDisplay.date_of_birth || '--'}</div>
               <div><span className="text-slate-400">Blood Group:</span> {profileDisplay.blood_group || '--'}</div>
@@ -155,6 +175,14 @@ const AmbulanceProfile = () => {
       {isEditing && (
       <form onSubmit={onSubmit} className="panel-card space-y-6">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <label htmlFor="driver_name" className="field-label">Driver Name</label>
+            <input id="driver_name" name="driver_name" value={form.driver_name} onChange={onChange} className="w-full" />
+          </div>
+          <div>
+            <label htmlFor="driver_email" className="field-label">Driver Email</label>
+            <input id="driver_email" type="email" name="driver_email" value={form.driver_email} onChange={onChange} className="w-full" />
+          </div>
           <div>
             <label htmlFor="phone" className="field-label">Phone</label>
             <input id="phone" name="phone" value={form.phone} onChange={onChange} className="w-full" />

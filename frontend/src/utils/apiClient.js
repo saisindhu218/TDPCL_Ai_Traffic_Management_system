@@ -2,7 +2,7 @@ import axios from 'axios';
 import { getApiBaseUrls } from './backendUrls';
 
 const apiClient = axios.create();
-const REQUEST_TIMEOUT_MS = 2500;
+const REQUEST_TIMEOUT_MS = 10000;
 let preferredBaseURL = null;
 
 const shouldRetry = (error) => {

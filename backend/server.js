@@ -18,15 +18,39 @@ const logger = require('./utils/logger');
 
 const app = express();
 
-const allowedOrigins = (process.env.CORS_ORIGIN || 'http://localhost:5173,http://localhost:4173')
+const allowedOrigins = new Set((process.env.CORS_ORIGIN || 'http://localhost:5173,http://localhost:5174,http://localhost:4173')
   .split(',')
   .map((origin) => origin.trim())
-  .filter(Boolean);
+  .filter(Boolean));
+
+function isAllowedOrigin(origin) {
+  if (!origin) {
+    return true;
+  }
+
+  if (allowedOrigins.has(origin)) {
+    return true;
+  }
+
+  if (!URL.canParse(origin)) {
+    return false;
+  }
+
+  const parsed = new URL(origin);
+  return ['localhost', '127.0.0.1'].includes(parsed.hostname);
+}
 
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
-    origin: allowedOrigins,
+    origin(origin, callback) {
+      if (isAllowedOrigin(origin)) {
+        callback(null, true);
+        return;
+      }
+
+      callback(new Error('Not allowed by CORS'));
+    },
     methods: ['GET', 'POST'],
     credentials: true
   },
@@ -43,7 +67,7 @@ app.use(compression());
 app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'dev'));
 app.use(cors({
   origin(origin, callback) {
-    if (!origin || allowedOrigins.includes(origin)) {
+    if (isAllowedOrigin(origin)) {
       callback(null, true);
       return;
     }

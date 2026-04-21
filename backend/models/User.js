@@ -6,6 +6,8 @@ const userSchema = new mongoose.Schema({
   password: { type: String, required: true },
   role: { type: String, enum: ['ambulance', 'police', 'hospital', 'admin'], required: true },
   ambulance_profile: {
+    driver_name: { type: String },
+    driver_email: { type: String },
     phone: { type: String },
     date_of_birth: { type: String },
     blood_group: { type: String },

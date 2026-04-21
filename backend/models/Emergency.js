@@ -21,6 +21,11 @@ const emergencySchema = new mongoose.Schema({
   incident_note: { type: String, default: '' },
   cleared_signals: [{
     id: String,
+    signal_name: String,
+    lane_direction: String,
+    from: String,
+    to: String,
+    sequence: Number,
     status: String
   }],
   congestion_level: { type: Number, min: 0, max: 100, default: 0 },

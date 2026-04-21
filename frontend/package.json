@@ -10,7 +10,6 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@react-google-maps/api": "^2.20.7",
     "@headlessui/react": "^2.2.9",
     "@tailwindcss/vite": "^4.2.2",
     "axios": "^1.15.0",

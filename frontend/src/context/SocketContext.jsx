@@ -6,6 +6,35 @@ import { getSocketUrls } from '../utils/backendUrls';
 
 export const SocketContext = createContext();
 
+function normalizeRole(role) {
+  if (typeof role !== 'string') {
+    return '';
+  }
+
+  const normalized = role.trim().toLowerCase();
+  if (!normalized) {
+    return '';
+  }
+
+  if (normalized.includes('ambulance') || ['paramedic', 'emt', 'ambulance_driver', 'ambulance-driver', 'driver'].includes(normalized)) {
+    return 'ambulance';
+  }
+
+  if (normalized.includes('police') || ['traffic-police', 'traffic_police', 'constable'].includes(normalized)) {
+    return 'police';
+  }
+
+  if (normalized.includes('hospital') || ['hospital_staff', 'hospital-staff', 'medical'].includes(normalized)) {
+    return 'hospital';
+  }
+
+  if (normalized.includes('admin')) {
+    return 'admin';
+  }
+
+  return normalized;
+}
+
 export const SocketProvider = ({ children }) => {
   const { user } = useContext(AuthContext);
   const [socket, setSocket] = useState(null);
@@ -43,14 +72,15 @@ export const SocketProvider = ({ children }) => {
 
         newSocket.on('connect', () => {
           console.log('Connected to socket server');
-          newSocket.emit('join_role', user.role);
+          newSocket.emit('join_role', normalizeRole(user.role));
           setConnectionStatus('connected');
           setLastSocketError('');
           setSocket(newSocket);
         });
 
-        newSocket.on('disconnect', () => {
-          setConnectionStatus('disconnected');
+        newSocket.on('disconnect', (reason) => {
+          setLastSocketError(`Socket disconnected: ${reason}`);
+          setConnectionStatus('connecting');
         });
 
         newSocket.on('socket_error', (payload) => {

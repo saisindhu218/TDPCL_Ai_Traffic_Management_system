@@ -50,6 +50,29 @@ function toLaneKeyFromHistory(entry) {
   return `${emergencyId}-${signalId}`;
 }
 
+function isSignalCleared(signal, emergency, clearedLaneKeys) {
+  if (!signal || !emergency) {
+    return false;
+  }
+
+  if (String(signal.status || '').toLowerCase() === 'cleared') {
+    return true;
+  }
+
+  return clearedLaneKeys.includes(getLaneKey(emergency, signal.id));
+}
+
+function formatSignalLaneLabel(signal) {
+  const signalName = signal?.signal_name || signal?.id || 'Signal';
+  const laneDirection = signal?.lane_direction || (signal?.from && signal?.to ? `${signal.from} to ${signal.to}` : 'Direction pending');
+
+  if (signal?.id?.includes(' - ')) {
+    return signal.id;
+  }
+
+  return `${signalName} - ${laneDirection}`;
+}
+
 const PoliceDashboard = () => {
   const { socket } = useContext(SocketContext);
   const cachedDashboard = loadDashboardCache();
@@ -230,7 +253,7 @@ const PoliceDashboard = () => {
   const currentEmergency = activeEmergencyList[0] || null;
   const activeCount = activeEmergencyList.length;
   const pendingSignals = currentEmergency
-    ? (currentEmergency.cleared_signals || []).filter((signal) => !clearedLaneKeys.includes(getLaneKey(currentEmergency, signal.id)))
+    ? (currentEmergency.cleared_signals || []).filter((signal) => !isSignalCleared(signal, currentEmergency, clearedLaneKeys))
     : [];
 
   const clearLane = async (emergency, signal) => {
@@ -248,7 +271,7 @@ const PoliceDashboard = () => {
         emergency_id: emergency.emergency_id || emergency._id,
         signal_id: signal.id,
         lane_name: signal.id,
-        note: `Police confirmed ${signal.id} is clear`
+        note: `Police confirmed ${formatSignalLaneLabel(signal)} is clear`
       });
 
       setClearedLaneKeys((prev) => [key, ...prev]);
@@ -261,7 +284,7 @@ const PoliceDashboard = () => {
             ...res.data.payload,
             signal_id: signal.id,
             lane_name: signal.id,
-            note: `Police confirmed ${signal.id} is clear`
+            note: `Police confirmed ${formatSignalLaneLabel(signal)} is clear`
           }
         },
         ...prev
@@ -482,14 +505,13 @@ const PoliceDashboard = () => {
                 <div className="space-y-2">
                   {pendingSignals.map((sig) => {
                     const laneKey = getLaneKey(currentEmergency, sig.id);
-                    const isCleared = clearedLaneKeys.includes(laneKey);
+                    const isCleared = isSignalCleared(sig, currentEmergency, clearedLaneKeys);
 
                     return (
                       <div key={laneKey} className="flex items-center gap-3 text-sm rounded-2xl border border-white/10 bg-white/5 p-3">
                         <AlertTriangle className="w-4 h-4 text-amber-500 shrink-0" />
                         <div className="min-w-0">
-                          <div className="text-slate-100 font-medium">{sig.id}</div>
-                          <div className="text-[11px] text-slate-400">Priority lane</div>
+                          <div className="text-slate-100 font-medium">{formatSignalLaneLabel(sig)}</div>
                         </div>
                         <button
                           type="button"
@@ -497,7 +519,7 @@ const PoliceDashboard = () => {
                           disabled={isCleared}
                           className="action-button ml-auto px-3 py-1.5 text-xs bg-emerald-500/15 text-emerald-200 hover:bg-emerald-500/20 disabled:bg-white/5 disabled:text-slate-500"
                         >
-                          {isCleared ? 'Cleared' : 'Clear Lane'}
+                          {isCleared ? 'Cleared' : 'Clear Signal + Lane'}
                         </button>
                       </div>
                     );
