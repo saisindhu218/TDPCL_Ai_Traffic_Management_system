@@ -27,10 +27,17 @@ const ProtectedRoute = ({ children, allowedRoles }) => {
     });
   };
 
-  if (loading) return <div className="flex min-h-screen items-center justify-center text-slate-200">Loading...</div>;
 
-  if (!user) return <Navigate to="/" replace />;
-  
+  if (loading) {
+    // Wait for loading to finish before deciding
+    return <div className="flex min-h-screen items-center justify-center text-slate-200">Loading...</div>;
+  }
+
+  if (!user) {
+    // Only redirect if loading is done and user is not present
+    return <Navigate to="/" replace />;
+  }
+
   if (allowedRoles && !allowedRoles.includes(user.role)) {
     return <Navigate to="/" replace />; // Or return a "Not Authorized" page
   }
