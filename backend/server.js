@@ -18,7 +18,8 @@ const logger = require('./utils/logger');
 
 const app = express();
 
-const allowedOrigins = new Set((process.env.CORS_ORIGIN || 'http://localhost:5173,http://localhost:5174,http://localhost:4173')
+const allowedOrigins = new Set(
+  (process.env.CORS_ORIGIN || 'http://localhost:5173,http://localhost:5174,http://localhost:4173,https://your-netlify-url.netlify.app')
   .split(',')
   .map((origin) => origin.trim())
   .filter(Boolean));
