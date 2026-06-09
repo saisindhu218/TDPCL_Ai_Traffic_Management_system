@@ -27,10 +27,10 @@ A full-stack web application that improves ambulance movement during emergencies
 
 | Role      | Email                                           | Password |
 | --------- | ----------------------------------------------- | -------- |
-| Ambulance | [ambulance@demo.com](mailto:ambulance@demo.com) | demo123  |
-| Police    | [police@demo.com](mailto:police@demo.com)       | demo123  |
-| Hospital  | [hospital@demo.com](mailto:hospital@demo.com)   | demo123  |
-| Admin     | [admin@demo.com](mailto:admin@demo.com)         | demo123  |
+| Ambulance | [ambulance@demo.com](mailto:sindhuambulance@gmail.com) | sindhu123  |
+| Police    | [police@demo.com](mailto:police@gmail.com)       | police123  |
+| Hospital  | [hospital@demo.com](mailto:hospital@gmail.com)   | hospital123  |
+| Admin     | [admin@demo.com](mailto:admin@gmail.com)         | admin123  |
 
 
 
